@@ -75,8 +75,8 @@ async function init() {
         });
 
         await state.ffmpeg.load({
-            coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
-            wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm'
+            coreURL: 'js/ffmpeg/ffmpeg-core.js',
+            wasmURL: 'js/ffmpeg/ffmpeg-core.wasm'
         });
 
         state.ffmpegReady = true;
