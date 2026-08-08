@@ -149,59 +149,59 @@ enableButtons(state.ffmpegReady);
 // ========== FALLBACK ==========
 async function tryFfmpegFallback(){
     diag("=== tryFfmpegFallback START ===");
-    if(!state.currentFile){diag("❌ Нет currentFile");state.fallbackInProgress=false;return;}
+    try{
+        if(!state.currentFile){diag("❌ Нет currentFile");return;}
 
-    // Ждём FFmpeg
-    if(!state.ffmpegReady){
-        diag("⏳ Ожидание FFmpeg...");
-        els.decoderMsg.textContent = "Загрузка FFmpeg WASM, подождите...";
-        for(let i=0;i<120 && !state.ffmpegReady;i++){await new Promise(r=>setTimeout(r,500));}
-        if(!state.ffmpegReady){diag("❌ FFmpeg не загрузился");els.decoderMsg.textContent="FFmpeg не загрузился. Проверьте соединение.";return;}
-    }
-    diag("✅ FFmpeg готов");
-
-    hideDecoderError();
-    setPlayerMode('video');
-
-    // СБРОСИТЬ старый broken src перед транскодом
-    diag("Сброс video.src...");
-    els.video.removeEventListener('error', onVideoError);
-    els.video.src = "";
-    els.video.load();
-    els.video.addEventListener('error', onVideoError);
-    diag("Сброс video.src завершён");
-
-    await loadFileToFfmpeg();
-
-    const thresholdBytes = state.streamingThresholdMB * 1024 * 1024;
-    const useStreaming = state.preferredMode === 'streaming' ||
-        (state.preferredMode === 'auto' && state.currentFile.size >= thresholdBytes);
-
-    diag("Режим="+state.preferredMode+", размер="+formatBytes(state.currentFile.size)+", порог="+state.streamingThresholdMB+"MB → "+(useStreaming?"стриминг":"legacy"));
-
-    if(useStreaming){
-        setStatus("transcoding","🔄 Потоковая обработка...");
-        els.btnStop.disabled = false;
-        state.cancelled = false; state.streaming = true;
-        try{
-            const started = await streamingPipeline(state.currentFile);
-            if(!started){
-                diag("⚠️ Стриминг не дал результата, fallback на legacy...");
-                await legacyFullTranscode(state.currentFile);
-            }
-        }catch(e){
-            diag("❌ Ошибка стриминга: "+e.message);
-            await legacyFullTranscode(state.currentFile);
-        }finally{
-            state.streaming = false;
-            els.btnStop.disabled = true;
+        // Ждём FFmpeg
+        if(!state.ffmpegReady){
+            diag("⏳ Ожидание FFmpeg...");
+            els.decoderMsg.textContent = "Загрузка FFmpeg WASM, подождите...";
+            for(let i=0;i<120 && !state.ffmpegReady;i++){await new Promise(r=>setTimeout(r,500));}
+            if(!state.ffmpegReady){diag("❌ FFmpeg не загрузился");els.decoderMsg.textContent="FFmpeg не загрузился. Проверьте соединение.";return;}
         }
-    }else{
-        setStatus("transcoding","🔄 Транскодирование (legacy)...");
-        await legacyFullTranscode(state.currentFile);
+        diag("✅ FFmpeg готов");
+
+        hideDecoderError();
+        setPlayerMode('video');
+        els.video.pause();
+
+        diag("Загрузка файла в FFmpeg...");
+        await loadFileToFfmpeg();
+        diag("✅ Файл в FFmpeg");
+
+        const thresholdBytes = state.streamingThresholdMB * 1024 * 1024;
+        const useStreaming = state.preferredMode === 'streaming' ||
+            (state.preferredMode === 'auto' && state.currentFile.size >= thresholdBytes);
+
+        diag("Режим="+state.preferredMode+", размер="+formatBytes(state.currentFile.size)+", порог="+state.streamingThresholdMB+"MB → "+(useStreaming?"стриминг":"legacy"));
+
+        if(useStreaming){
+            setStatus("transcoding","🔄 Потоковая обработка...");
+            els.btnStop.disabled = false;
+            state.cancelled = false; state.streaming = true;
+            try{
+                const started = await streamingPipeline(state.currentFile);
+                if(!started){
+                    diag("⚠️ Стриминг не дал результата, fallback на legacy...");
+                    await legacyFullTranscode(state.currentFile);
+                }
+            }catch(e){
+                diag("❌ Ошибка стриминга: "+e.message);
+                await legacyFullTranscode(state.currentFile);
+            }finally{
+                state.streaming = false;
+                els.btnStop.disabled = true;
+            }
+        }else{
+            setStatus("transcoding","🔄 Транскодирование (legacy)...");
+            await legacyFullTranscode(state.currentFile);
+        }
+    }catch(e){
+        diag("❌ tryFfmpegFallback EXCEPTION: "+e.message);
+        console.error(e);
+        setStatus("error","❌ Ошибка fallback: "+e.message);
     }
     diag("=== tryFfmpegFallback END ===");
-
 }
 
 // ========== CODEC SNIFFER ==========
