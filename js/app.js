@@ -1,7 +1,6 @@
 const $=(sel)=>document.querySelector(sel);
-const state={ffmpeg:null,ffmpegReady:false,currentFile:null,currentFileName:"",currentFileData:null,isTranscoded:false,transcodedBlobUrl:null,webglFilter:null,webglEnabled:false,ffmpegLazyLoaded:false,cancelled:false,streaming:false};
-const els={status:$("#status-bar"),diagPanel:$("#diag-panel"),diagContent:$("#diag-content"),dropZone:$("#drop-zone"),fileInput:$("#file-input"),video:$("#video-player"),canvas:$("#gl-canvas"),placeholder:$("#placeholder"),statsPanel:$("#stats-panel"),statsGrid:$("#stats-grid"),ffmpegPanel:$("#ffmpeg-panel"),btnTranscode:$("#btn-transcode"),btnThumbs:$("#btn-thumbs"),btnGif:$("#btn-gif"),btnInfo:$("#btn-info"),btnLoadFfmpeg:$("#btn-load-ffmpeg"),btnStop:$("#btn-stop"),progress:$("#progress"),progressFill:$("#progress-fill"),progressText:$("#progress-text"),logOutput:$("#log-output"),resultPanel:$("#result-panel"),resultContent:$("#result-content"),thumbsPanel:$("#thumbs-panel"),thumbsGrid:$("#thumbs-grid"),webglPanel:$("#webgl-panel"),webglToggle:$("#webgl-toggle"),filterGrid:$("#filter-grid"),lazyPanel:$("#lazy-panel"),playerStage:$("#player-stage")};
-const NEEDS_TRANSCODE_EXTS=new Set([".mkv",".avi",".mov",".flv",".wmv",".m2ts",".ts",".mpeg",".mpg",".3gp",".ogv",".webm"]);
+const state={ffmpeg:null,ffmpegReady:false,currentFile:null,currentFileName:"",currentFileData:null,isTranscoded:false,transcodedBlobUrl:null,webglFilter:null,webglEnabled:false,cancelled:false,streaming:false,html5Failed:false};
+const els={status:$("#status-bar"),diagPanel:$("#diag-panel"),diagContent:$("#diag-content"),dropZone:$("#drop-zone"),fileInput:$("#file-input"),video:$("#video-player"),canvas:$("#gl-canvas"),placeholder:$("#placeholder"),decoderError:$("#decoder-error"),decoderMsg:$("#decoder-msg"),btnTryFfmpeg:$("#btn-try-ffmpeg"),statsPanel:$("#stats-panel"),statsGrid:$("#stats-grid"),ffmpegPanel:$("#ffmpeg-panel"),btnTranscode:$("#btn-transcode"),btnThumbs:$("#btn-thumbs"),btnGif:$("#btn-gif"),btnInfo:$("#btn-info"),btnStop:$("#btn-stop"),btnLoadFfmpeg:$("#btn-load-ffmpeg"),progress:$("#progress"),progressFill:$("#progress-fill"),progressText:$("#progress-text"),logOutput:$("#log-output"),resultPanel:$("#result-panel"),resultContent:$("#result-content"),thumbsPanel:$("#thumbs-panel"),thumbsGrid:$("#thumbs-grid"),webglPanel:$("#webgl-panel"),webglToggle:$("#webgl-toggle"),filterGrid:$("#filter-grid"),lazyPanel:$("#lazy-panel"),playerStage:$("#player-stage")};
 
 function setStatus(cls,text){els.status.className="status "+cls;els.status.textContent=text;console.log("[Status]",text);}
 function diag(msg){const p=document.createElement("p");p.textContent=msg;els.diagContent.appendChild(p);console.log("[Diag]",msg);}
@@ -11,15 +10,22 @@ function resetProgress(){els.progress.style.display="none";els.progressFill.styl
 function enableButtons(enabled){[els.btnTranscode,els.btnThumbs,els.btnGif,els.btnInfo].forEach(b=>b.disabled=!enabled||!state.currentFile);}
 
 function setPlayerMode(mode){
-    // mode: 'placeholder' | 'video' | 'webgl'
     els.playerStage.dataset.mode = mode;
+}
+
+function showDecoderError(msg){
+    els.decoderMsg.textContent = msg || "Decoder closed unexpectedly";
+    els.decoderError.style.display = "flex";
+    setPlayerMode('placeholder');
+}
+function hideDecoderError(){
+    els.decoderError.style.display = "none";
 }
 
 async function checkFile(url,name){try{diag("Проверка "+name+"...");const r=await fetch(url,{method:"HEAD"});if(!r.ok){diag("❌ "+name+": HTTP "+r.status);return false;}const ct=r.headers.get("content-type")||"unknown";const len=r.headers.get("content-length")||"?";diag("✅ "+name+" — "+ct+" ("+formatBytes(parseInt(len)||0)+")");return true;}catch(e){diag("❌ "+name+": "+e.message);return false;}}
 
 function formatBytes(b){if(b===0)return"0 B";const k=1024,s=["B","KB","MB","GB"],i=Math.floor(Math.log(b)/Math.log(k));return parseFloat((b/Math.pow(k,i)).toFixed(2))+" "+s[i];}
 function ext(name){const i=name.lastIndexOf(".");return i>=0?name.slice(i).toLowerCase():".mp4";}
-function needsTranscode(file){const e=ext(file.name),t=file.type.toLowerCase();if(NEEDS_TRANSCODE_EXTS.has(e))return true;const c=els.video.canPlayType(t);return c===""||c==="no";}
 
 function setupEvents(){
 els.dropZone.addEventListener("click",()=>els.fileInput.click());
@@ -31,10 +37,30 @@ els.btnTranscode.addEventListener("click",()=>legacyFullTranscode(state.currentF
 els.btnThumbs.addEventListener("click",extractThumbnails);
 els.btnGif.addEventListener("click",makeGif);
 els.btnInfo.addEventListener("click",getFfmpegInfo);
-els.btnLoadFfmpeg.addEventListener("click",initFfmpeg);
+els.btnTryFfmpeg.addEventListener("click",tryFfmpegFallback);
 els.btnStop.addEventListener("click",stopStreaming);
 els.webglToggle.addEventListener("change",toggleWebGL);
 document.querySelectorAll(".filter-btn").forEach(b=>b.addEventListener("click",()=>setFilter(b.dataset.filter)));
+
+// === Ключевое: ловим ошибки HTML5 video ===
+els.video.addEventListener('error', onVideoError);
+els.video.addEventListener('loadeddata', () => { hideDecoderError(); state.html5Failed = false; });
+}
+
+function onVideoError(e){
+    const err = els.video.error;
+    if (!err) return;
+    const msgs = {
+        1: "Прервано загрузкой",
+        2: "Ошибка сети",
+        3: "Ошибка декодирования",
+        4: "Формат не поддерживается"
+    };
+    const msg = msgs[err.code] || ("Decoder error code " + err.code);
+    diag("❌ HTML5 video error: " + msg);
+    state.html5Failed = true;
+    showDecoderError(msg);
+    setStatus("error","❌ " + msg);
 }
 
 function stopStreaming(){
@@ -48,7 +74,6 @@ function toggleWebGL(){state.webglEnabled=els.webglToggle.checked;if(!state.webg
 
 function setFilter(name){if(!state.webglFilter)return;state.webglFilter.setFilter(name);document.querySelectorAll(".filter-btn").forEach(b=>b.classList.toggle("active",b.dataset.filter===name));}
 
-// ========== TOBLOBURL FIX ==========
 async function toBlobURL(url, mimeType) {
     diag("⬇️ Загрузка " + url.split('/').pop() + "...");
     const response = await fetch(url);
@@ -59,11 +84,12 @@ async function toBlobURL(url, mimeType) {
     return blobURL;
 }
 
+// ========== EAGER LOAD: FFmpeg при старте страницы ==========
 async function initFfmpeg(){
 if(state.ffmpegReady){diag("ℹ️ FFmpeg уже загружен");return;}
-setStatus("loading","Диагностика файлов...");
+setStatus("loading","Загрузка FFmpeg WASM (~32MB)...");
 els.diagPanel.style.display="block";els.diagContent.innerHTML="";
-els.lazyPanel.style.display="none";els.ffmpegPanel.style.display="block";
+els.ffmpegPanel.style.display="block";
 
 const base=location.href.replace(/\/$/,"");
 
@@ -81,7 +107,6 @@ diag("✅ WebAssembly поддерживается");
 if(typeof FFmpegWASM==="undefined"){diag("❌ FFmpegWASM не определён");setStatus("error","❌ ffmpeg.js не загрузился");return;}
 diag("✅ FFmpegWASM определён");
 
-setStatus("loading","Загрузка FFmpeg WASM (~32MB, 1–3 мин)...");
 try{
 const {FFmpeg}=FFmpegWASM;
 state.ffmpeg=new FFmpeg();
@@ -99,15 +124,10 @@ await state.ffmpeg.load({coreURL:coreURL,wasmURL:wasmURL});
 const elapsed=((performance.now()-t0)/1000).toFixed(1);
 state.ffmpegReady=true;
 setStatus("ready","✅ FFmpeg WASM готов ("+elapsed+"с)");
-els.ffmpegPanel.style.display="block";
 enableButtons(true);
 diag("✅ Инициализация завершена за "+elapsed+"с");
-if(state.currentFile){
-    await loadFileToFfmpeg();
-    if(needsTranscode(state.currentFile)){
-        setPlayerMode('video');
-        await handleFile(state.currentFile);
-    }
+if(state.currentFile && state.html5Failed){
+    await tryFfmpegFallback();
 }
 }catch(err){
 console.error(err);
@@ -120,32 +140,52 @@ if(err.stack)appendLog("STACK: "+err.stack);
 
 async function loadFileToFfmpeg(){if(!state.ffmpegReady||!state.currentFile)return;const inputName="input"+ext(state.currentFileName);await state.ffmpeg.writeFile(inputName,state.currentFileData);appendLog("Файл загружен в FFmpeg FS: "+inputName);}
 
+// ========== HANDLE FILE: пробуем HTML5 для ВСЕХ ==========
 async function handleFile(file){
 if(!file)return;
-state.currentFile=file;state.currentFileName=file.name;state.isTranscoded=false;state.cancelled=false;
+state.currentFile=file;state.currentFileName=file.name;state.isTranscoded=false;state.html5Failed=false;state.cancelled=false;
+hideDecoderError();
 if(state.transcodedBlobUrl){URL.revokeObjectURL(state.transcodedBlobUrl);state.transcodedBlobUrl=null;}
 const arrayBuffer=await file.arrayBuffer();state.currentFileData=new Uint8Array(arrayBuffer);
-const needsTc=needsTranscode(file);const canPlay=els.video.canPlayType(file.type);
-showStats({"Имя файла":file.name,"Размер":formatBytes(file.size),"MIME-type":file.type||"unknown","Расширение":ext(file.name),"HTML5 поддержка":canPlay||"нет","Требуется транскод":needsTc?"Да (FFmpeg WASM)":"Нет"});
 
-if(state.webglEnabled&&state.webglFilter){setPlayerMode('webgl');}else{setPlayerMode('video');}
+showStats({"Имя файла":file.name,"Размер":formatBytes(file.size),"MIME-type":file.type||"unknown","Расширение":ext(file.name)});
 
-if(state.ffmpegReady){await loadFileToFfmpeg();}else if(needsTc&&!state.ffmpegLazyLoaded){els.lazyPanel.style.display="block";}
+// Пробуем HTML5 для ЛЮБОГО файла
+setPlayerMode('video');
+const url=URL.createObjectURL(file);
+els.video.src=url;
+els.video.play().catch(e=>console.log('Autoplay blocked:',e));
+setStatus("ready","🎬 Пробуем HTML5 воспроизведение...");
 
-if(!needsTc){
-const url=URL.createObjectURL(file);els.video.src=url;els.video.play().catch(e=>console.log('Autoplay blocked:',e));
-setStatus("ready","✅ Нативное воспроизведение (HTML5)");
-if(state.webglEnabled&&state.webglFilter){state.webglFilter.setVideo(els.video);state.webglFilter.start();}
-}else if(state.ffmpegReady){
-    // v14: streaming для больших файлов, legacy для маленьких
-    const SMALL_FILE_THRESHOLD = 64 * 1024 * 1024; // 64 MB
+// Ждём либо loadeddata (успех), либо error (провал)
+// Если FFmpeg ещё не загружен — начинаем загрузку в фоне
+if(!state.ffmpegReady && !state.ffmpegLoading){
+    state.ffmpegLoading = true;
+    initFfmpeg().then(() => { state.ffmpegLoading = false; });
+}
+
+if(state.ffmpegReady){await loadFileToFfmpeg();}
+enableButtons(state.ffmpegReady);
+}
+
+// ========== FALLBACK: пользователь нажал «Попробовать FFmpeg» ==========
+async function tryFfmpegFallback(){
+    if(!state.currentFile || !state.ffmpegReady){
+        diag("⏳ FFmpeg ещё загружается, подождите...");
+        return;
+    }
+    hideDecoderError();
+    setPlayerMode('video');
+    await loadFileToFfmpeg();
+
+    const file = state.currentFile;
+    const SMALL_FILE_THRESHOLD = 64 * 1024 * 1024;
+
     if (file.size < SMALL_FILE_THRESHOLD) {
-        setStatus("transcoding","🔄 Транскодирование (legacy, файл < 64 МБ)...");
-        setPlayerMode('video');
+        setStatus("transcoding","🔄 Транскодирование (legacy)...");
         await legacyFullTranscode(file);
     } else {
-        setStatus("transcoding","🔄 Потоковая обработка (streaming v14)...");
-        setPlayerMode('video');
+        setStatus("transcoding","🔄 Потоковая обработка (streaming)...");
         els.btnStop.disabled = false;
         state.cancelled = false;
         state.streaming = true;
@@ -163,19 +203,13 @@ if(state.webglEnabled&&state.webglFilter){state.webglFilter.setVideo(els.video);
             els.btnStop.disabled = true;
         }
     }
-}else{
-setStatus(needsTc?"error":"ready",needsTc?"❌ Формат не поддерживается HTML5, нажмите «Загрузить FFmpeg»":"✅ Воспроизведение");
-if(needsTc){setPlayerMode('placeholder');els.placeholder.innerHTML="<p>❌ Формат не поддерживается</p><p class='hint'>"+file.name+" — требуется FFmpeg WASM</p>";}
-}
-enableButtons(state.ffmpegReady);
 }
 
-// ========== v14: CODEC SNIFFER ==========
+// ========== CODEC SNIFFER ==========
 async function sniffCodecs(file) {
     const chunk = new Uint8Array(await file.slice(0, 2 * 1024 * 1024).arrayBuffer());
     const text = new TextDecoder('ascii', { fatal: false }).decode(chunk);
 
-    // MKV / WebM (EBML header)
     if (chunk.length >= 4 && chunk[0] === 0x1A && chunk[1] === 0x45 && chunk[2] === 0xDF && chunk[3] === 0xA3) {
         const hasH264 = text.includes('V_MPEG4/ISO/AVC');
         const hasAAC = text.includes('A_AAC');
@@ -189,7 +223,6 @@ async function sniffCodecs(file) {
         return { copy: false };
     }
 
-    // MP4 / MOV (ftyp)
     if (text.includes('ftyp') || text.includes('moov')) {
         const hasAVC = text.includes('avc1') || text.includes('AVC1');
         const hasAAC = text.includes('mp4a') || text.includes('AAC');
@@ -200,7 +233,6 @@ async function sniffCodecs(file) {
         return { copy: false };
     }
 
-    // AVI (RIFF ... AVI)
     if (text.includes('RIFF') && text.includes('AVI ')) {
         const hasH264 = text.includes('H264') || text.includes('AVC1') || text.includes('avc1');
         const hasAAC = text.includes('AAC');
@@ -212,11 +244,9 @@ async function sniffCodecs(file) {
         return { copy: false };
     }
 
-    // Любое сомнение → транскод
     return { copy: false };
 }
 
-// ========== v14: MP4 INIT/SEG SPLITTER ==========
 function splitInitAndSeg(u8) {
     let i = 0;
     while (i + 8 <= u8.length) {
@@ -228,7 +258,6 @@ function splitInitAndSeg(u8) {
     return { init: u8, seg: new Uint8Array(0) };
 }
 
-// ========== v14: SOURCEBUFFER APPEND QUEUE ==========
 function appendQ(sb, buf) {
     return new Promise((res, rej) => {
         const fail = () => rej(sb.error || new Error('SourceBuffer error'));
@@ -241,7 +270,6 @@ function appendQ(sb, buf) {
     });
 }
 
-// ========== v14: STREAMING PIPELINE ==========
 async function streamingPipeline(file, retryTranscode = false) {
     const ms = new MediaSource();
     const msUrl = URL.createObjectURL(ms);
@@ -315,7 +343,6 @@ async function streamingPipeline(file, retryTranscode = false) {
     return started;
 }
 
-// ========== v12 LEGACY: FULL TRANSCODE ==========
 async function legacyFullTranscode(file){
 if(!file)return;
 const input="input"+ext(file.name);
@@ -352,4 +379,8 @@ function showResult(data,mime,filename){const blob=new Blob([data.buffer],{type:
 if("serviceWorker"in navigator){navigator.serviceWorker.register("./sw.js").catch(e=>console.log("SW skip:",e));}
 
 setupEvents();
-setStatus("ready","✅ HTML5 Video готов. FFmpeg WASM загружается по требованию.");
+setStatus("ready","✅ Готов. Загрузите видео — пробуем HTML5, при ошибке → FFmpeg.");
+
+// Eager load FFmpeg в фоне
+state.ffmpegLoading = true;
+initFfmpeg().then(() => { state.ffmpegLoading = false; });
