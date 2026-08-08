@@ -135,12 +135,14 @@ enableButtons(state.ffmpegReady);
 }
 
 async function autoTranscode(file){
+if(typeof MediaSource!=="undefined"&&MediaSource.isTypeSupported('video/mp4; codecs="avc1.64001F, mp4a.40.2"')){try{await streamTranscode(file);return;}catch(e){console.warn("Streaming failed, fallback:",e);}}
 const input="input"+ext(file.name);const output="output_auto.mp4";updateProgress(0);
 try{
 await state.ffmpeg.exec(["-i",input,"-c:v","libx264","-preset","ultrafast","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart","-y",output]);
 const data=await state.ffmpeg.readFile(output);
 const blob=new Blob([data.buffer],{type:"video/mp4"});
-els.placeholder.style.display='none';els.video.classList.add('active');els.canvas.classList.remove('active');state.transcodedBlobUrl=URL.createObjectURL(blob);
+state.transcodedBlobUrl=URL.createObjectURL(blob);
+els.placeholder.style.display='none';els.video.classList.add('active');els.canvas.classList.remove('active');
 els.video.src=state.transcodedBlobUrl;els.video.load();els.video.play().catch(e=>console.log('Autoplay blocked:',e));state.isTranscoded=true;
 showStats({"Имя файла":file.name,"Размер оригинала":formatBytes(file.size),"Размер после транскода":formatBytes(blob.size),"Режим":"FFmpeg WASM транскод → H.264/AAC"});
 setStatus("ready","✅ Транскодировано и воспроизводится");
@@ -148,7 +150,44 @@ if(state.webglEnabled&&state.webglFilter){state.webglFilter.setVideo(els.video);
 }catch(e){appendLog("Ошибка транскода: "+e.message);setStatus("error","❌ Ошибка транскодирования");}finally{resetProgress();}
 }
 
-async function transcodeToMp4(){if(!state.ffmpegReady||!state.currentFile)return;const input="input"+ext(state.currentFileName);const output="output_manual.mp4";setStatus("transcoding","🔄 Конвертация в MP4...");updateProgress(0);els.resultPanel.style.display="none";try{await state.ffmpeg.exec(["-i",input,"-c:v","libx264","-preset","fast","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart","-y",output]);const data=await state.ffmpeg.readFile(output);const blob=new Blob([data.buffer],{type:"video/mp4"});const url=URL.createObjectURL(blob);els.video.src=url;els.placeholder.style.display='none';els.video.classList.add('active');els.canvas.classList.remove('active');state.transcodedBlobUrl=url;state.isTranscoded=true;els.video.load();els.video.play().catch(e=>console.log('Autoplay blocked:',e));showResult(data,"video/mp4","transcoded.mp4");setStatus("ready","✅ Конвертация завершена");if(state.webglEnabled&&state.webglFilter){state.webglFilter.setVideo(els.video);state.webglFilter.start();}}catch(e){appendLog("Ошибка: "+e.message);setStatus("error","❌ Ошибка конвертации");}finally{resetProgress();}}
+async function streamTranscode(file){
+const input="input"+ext(file.name);const output="output_stream.mp4";
+setStatus("transcoding","🔄 Потоковое транскодирование...");updateProgress(0);
+const mediaSource=new MediaSource();
+const url=URL.createObjectURL(mediaSource);
+els.video.src=url;els.video.classList.add('active');els.placeholder.style.display='none';els.canvas.classList.remove('active');
+return new Promise((resolve,reject)=>{
+mediaSource.addEventListener('sourceopen',async()=>{
+try{
+const mimeCodec='video/mp4; codecs="avc1.64001F, mp4a.40.2"';
+if(!MediaSource.isTypeSupported(mimeCodec))throw new Error("MediaSource не поддерживает "+mimeCodec);
+const sourceBuffer=mediaSource.addSourceBuffer(mimeCodec);
+const queue=[];
+sourceBuffer.addEventListener('updateend',()=>{if(queue.length>0&&!sourceBuffer.updating){sourceBuffer.appendBuffer(queue.shift());}});
+const ffmpegPromise=state.ffmpeg.exec(["-i",input,"-c:v","libx264","-preset","ultrafast","-crf","23","-c:a","aac","-b:a","128k","-movflags","frag_keyframe+empty_moov+default_base_moof","-f","mp4",output]);
+let lastSize=0;
+const interval=setInterval(async()=>{
+try{
+const data=await state.ffmpeg.readFile(output);
+if(data.length>lastSize){
+const chunk=data.slice(lastSize);
+if(!sourceBuffer.updating&&queue.length===0){sourceBuffer.appendBuffer(chunk);}else{queue.push(chunk);}
+lastSize=data.length;
+}
+}catch(e){}
+},500);
+await ffmpegPromise;
+clearInterval(interval);
+const drain=setInterval(()=>{if(!sourceBuffer.updating&&queue.length===0){clearInterval(drain);mediaSource.endOfStream();setStatus("ready","✅ Потоковое воспроизведение");resolve();}},200);
+}catch(err){reject(err);}
+});
+mediaSource.addEventListener('error',(e)=>reject(new Error("MediaSource error")));
+});
+}
+
+async function transcodeToMp4(){if(!state.ffmpegReady||!state.currentFile)return;
+if(typeof MediaSource!=="undefined"&&MediaSource.isTypeSupported('video/mp4; codecs="avc1.64001F, mp4a.40.2"')){try{await streamTranscode(state.currentFile);return;}catch(e){console.warn("Streaming failed:",e);}}
+const input="input"+ext(state.currentFileName);const output="output_manual.mp4";setStatus("transcoding","🔄 Конвертация в MP4...");updateProgress(0);els.resultPanel.style.display="none";try{await state.ffmpeg.exec(["-i",input,"-c:v","libx264","-preset","fast","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart","-y",output]);const data=await state.ffmpeg.readFile(output);const blob=new Blob([data.buffer],{type:"video/mp4"});const url=URL.createObjectURL(blob);els.placeholder.style.display='none';els.video.classList.add('active');els.canvas.classList.remove('active');els.video.src=url;els.video.load();els.video.play().catch(e=>console.log('Autoplay blocked:',e));state.transcodedBlobUrl=url;state.isTranscoded=true;showResult(data,"video/mp4","transcoded.mp4");setStatus("ready","✅ Конвертация завершена");if(state.webglEnabled&&state.webglFilter){state.webglFilter.setVideo(els.video);state.webglFilter.start();}}catch(e){appendLog("Ошибка: "+e.message);setStatus("error","❌ Ошибка конвертации");}finally{resetProgress();}}
 
 async function extractThumbnails(){if(!state.ffmpegReady||!state.currentFile)return;const input="input"+ext(state.currentFileName);setStatus("transcoding","🖼 Извлечение скриншотов...");updateProgress(0);els.thumbsPanel.style.display="none";els.thumbsGrid.innerHTML="";try{let duration=60;try{await state.ffmpeg.exec(["-i",input]);}catch(e){}const logText=els.logOutput.textContent;const durMatch=logText.match(/Duration: (\d+):(\d+):(\d+\.\d+)/);if(durMatch){duration=parseInt(durMatch[1])*3600+parseInt(durMatch[2])*60+parseFloat(durMatch[3]);}const count=8;const step=duration/(count+1);for(let i=1;i<=count;i++){const time=(step*i).toFixed(2);const outName="thumb_"+i+".jpg";await state.ffmpeg.exec(["-ss",String(time),"-i",input,"-vframes","1","-q:v","2","-y",outName]);const data=await state.ffmpeg.readFile(outName);const blob=new Blob([data.buffer],{type:"image/jpeg"});const url=URL.createObjectURL(blob);const div=document.createElement("div");div.className="thumb-item";div.innerHTML='<img src="'+url+'" alt=""><div class="thumb-label">'+formatTime(time)+"</div>";els.thumbsGrid.appendChild(div);updateProgress(Math.round((i/count)*100));}els.thumbsPanel.style.display="block";setStatus("ready","✅ Скриншоты готовы");}catch(e){appendLog("Ошибка: "+e.message);setStatus("error","❌ Ошибка извлечения скриншотов");}finally{resetProgress();}}
 
