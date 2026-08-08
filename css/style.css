@@ -83,6 +83,7 @@ header h1 { font-size: 1.9rem; margin-bottom: 6px; }
   margin-top: 8px;
 }
 
+/* ===== Player Stage (v14: single source of truth via data-mode) ===== */
 .player-wrapper {
   background: #000;
   border-radius: 12px;
@@ -103,17 +104,38 @@ header h1 { font-size: 1.9rem; margin-bottom: 6px; }
   display: none;
 }
 
-.player-wrapper canvas.active {
+/* placeholder visible by default */
+.player-wrapper .placeholder {
   display: block;
-}
-
-.player-wrapper video.active {
-  display: block;
-}
-
-.placeholder {
   color: var(--text-muted);
   text-align: center;
+}
+
+/* video mode */
+.player-wrapper[data-mode="video"] video {
+  display: block;
+}
+.player-wrapper[data-mode="video"] canvas,
+.player-wrapper[data-mode="video"] .placeholder {
+  display: none;
+}
+
+/* webgl mode */
+.player-wrapper[data-mode="webgl"] canvas {
+  display: block;
+}
+.player-wrapper[data-mode="webgl"] video,
+.player-wrapper[data-mode="webgl"] .placeholder {
+  display: none;
+}
+
+/* placeholder mode (explicit) */
+.player-wrapper[data-mode="placeholder"] video,
+.player-wrapper[data-mode="placeholder"] canvas {
+  display: none;
+}
+.player-wrapper[data-mode="placeholder"] .placeholder {
+  display: block;
 }
 
 .placeholder .hint { font-size: 0.85rem; margin-top: 6px; }
@@ -193,6 +215,15 @@ header h1 { font-size: 1.9rem; margin-bottom: 6px; }
   border-color: var(--accent);
   background: rgba(88,166,255,0.15);
   color: var(--accent);
+}
+
+/* Stop button style */
+#btn-stop {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+#btn-stop:hover:not(:disabled) {
+  background: rgba(248,81,73,0.15);
 }
 
 .progress {

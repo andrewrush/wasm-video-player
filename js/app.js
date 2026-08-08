@@ -1,6 +1,6 @@
 const $=(sel)=>document.querySelector(sel);
-const state={ffmpeg:null,ffmpegReady:false,currentFile:null,currentFileName:"",currentFileData:null,isTranscoded:false,transcodedBlobUrl:null,webglFilter:null,webglEnabled:false,ffmpegLazyLoaded:false};
-const els={status:$("#status-bar"),diagPanel:$("#diag-panel"),diagContent:$("#diag-content"),dropZone:$("#drop-zone"),fileInput:$("#file-input"),video:$("#video-player"),canvas:$("#gl-canvas"),placeholder:$("#placeholder"),statsPanel:$("#stats-panel"),statsGrid:$("#stats-grid"),ffmpegPanel:$("#ffmpeg-panel"),btnTranscode:$("#btn-transcode"),btnThumbs:$("#btn-thumbs"),btnGif:$("#btn-gif"),btnInfo:$("#btn-info"),btnLoadFfmpeg:$("#btn-load-ffmpeg"),progress:$("#progress"),progressFill:$("#progress-fill"),progressText:$("#progress-text"),logOutput:$("#log-output"),resultPanel:$("#result-panel"),resultContent:$("#result-content"),thumbsPanel:$("#thumbs-panel"),thumbsGrid:$("#thumbs-grid"),webglPanel:$("#webgl-panel"),webglToggle:$("#webgl-toggle"),filterGrid:$("#filter-grid"),lazyPanel:$("#lazy-panel")};
+const state={ffmpeg:null,ffmpegReady:false,currentFile:null,currentFileName:"",currentFileData:null,isTranscoded:false,transcodedBlobUrl:null,webglFilter:null,webglEnabled:false,ffmpegLazyLoaded:false,cancelled:false,streaming:false};
+const els={status:$("#status-bar"),diagPanel:$("#diag-panel"),diagContent:$("#diag-content"),dropZone:$("#drop-zone"),fileInput:$("#file-input"),video:$("#video-player"),canvas:$("#gl-canvas"),placeholder:$("#placeholder"),statsPanel:$("#stats-panel"),statsGrid:$("#stats-grid"),ffmpegPanel:$("#ffmpeg-panel"),btnTranscode:$("#btn-transcode"),btnThumbs:$("#btn-thumbs"),btnGif:$("#btn-gif"),btnInfo:$("#btn-info"),btnLoadFfmpeg:$("#btn-load-ffmpeg"),btnStop:$("#btn-stop"),progress:$("#progress"),progressFill:$("#progress-fill"),progressText:$("#progress-text"),logOutput:$("#log-output"),resultPanel:$("#result-panel"),resultContent:$("#result-content"),thumbsPanel:$("#thumbs-panel"),thumbsGrid:$("#thumbs-grid"),webglPanel:$("#webgl-panel"),webglToggle:$("#webgl-toggle"),filterGrid:$("#filter-grid"),lazyPanel:$("#lazy-panel"),playerStage:$("#player-stage")};
 const NEEDS_TRANSCODE_EXTS=new Set([".mkv",".avi",".mov",".flv",".wmv",".m2ts",".ts",".mpeg",".mpg",".3gp",".ogv",".webm"]);
 
 function setStatus(cls,text){els.status.className="status "+cls;els.status.textContent=text;console.log("[Status]",text);}
@@ -9,6 +9,11 @@ function appendLog(msg){els.logOutput.textContent+=msg+"\n";els.logOutput.scroll
 function updateProgress(pct,label){els.progress.style.display="flex";els.progressFill.style.width=pct+"%";els.progressText.textContent=label||pct+"%";}
 function resetProgress(){els.progress.style.display="none";els.progressFill.style.width="0%";els.progressText.textContent="0%";}
 function enableButtons(enabled){[els.btnTranscode,els.btnThumbs,els.btnGif,els.btnInfo].forEach(b=>b.disabled=!enabled||!state.currentFile);}
+
+function setPlayerMode(mode){
+    // mode: 'placeholder' | 'video' | 'webgl'
+    els.playerStage.dataset.mode = mode;
+}
 
 async function checkFile(url,name){try{diag("Проверка "+name+"...");const r=await fetch(url,{method:"HEAD"});if(!r.ok){diag("❌ "+name+": HTTP "+r.status);return false;}const ct=r.headers.get("content-type")||"unknown";const len=r.headers.get("content-length")||"?";diag("✅ "+name+" — "+ct+" ("+formatBytes(parseInt(len)||0)+")");return true;}catch(e){diag("❌ "+name+": "+e.message);return false;}}
 
@@ -22,24 +27,28 @@ els.fileInput.addEventListener("change",e=>handleFile(e.target.files[0]));
 els.dropZone.addEventListener("dragover",e=>{e.preventDefault();els.dropZone.classList.add("dragover");});
 els.dropZone.addEventListener("dragleave",()=>els.dropZone.classList.remove("dragover"));
 els.dropZone.addEventListener("drop",e=>{e.preventDefault();els.dropZone.classList.remove("dragover");const f=e.dataTransfer.files[0];if(f&&f.type.startsWith("video/"))handleFile(f);});
-els.btnTranscode.addEventListener("click",transcodeToMp4);
+els.btnTranscode.addEventListener("click",()=>legacyFullTranscode(state.currentFile));
 els.btnThumbs.addEventListener("click",extractThumbnails);
 els.btnGif.addEventListener("click",makeGif);
 els.btnInfo.addEventListener("click",getFfmpegInfo);
 els.btnLoadFfmpeg.addEventListener("click",initFfmpeg);
+els.btnStop.addEventListener("click",stopStreaming);
 els.webglToggle.addEventListener("change",toggleWebGL);
 document.querySelectorAll(".filter-btn").forEach(b=>b.addEventListener("click",()=>setFilter(b.dataset.filter)));
 }
 
-function toggleWebGL(){state.webglEnabled=els.webglToggle.checked;if(!state.webglEnabled){if(state.webglFilter){state.webglFilter.stop();state.webglFilter.destroy();state.webglFilter=null;}els.canvas.classList.remove("active");els.video.classList.add("active");return;}if(!state.webglFilter){try{state.webglFilter=new WebGLVideoFilter(els.canvas);state.webglFilter.setVideo(els.video);}catch(e){diag("❌ WebGL недоступен: "+e.message);els.webglToggle.checked=false;state.webglEnabled=false;return;}}els.video.classList.remove("active");els.canvas.classList.add("active");state.webglFilter.start();setStatus("webgl","🎨 WebGL режим");}
+function stopStreaming(){
+    state.cancelled = true;
+    state.streaming = false;
+    setStatus("ready","⏹ Остановлено пользователем");
+    els.btnStop.disabled = true;
+}
+
+function toggleWebGL(){state.webglEnabled=els.webglToggle.checked;if(!state.webglEnabled){if(state.webglFilter){state.webglFilter.stop();state.webglFilter.destroy();state.webglFilter=null;}setPlayerMode('video');return;}if(!state.webglFilter){try{state.webglFilter=new WebGLVideoFilter(els.canvas);state.webglFilter.setVideo(els.video);}catch(e){diag("❌ WebGL недоступен: "+e.message);els.webglToggle.checked=false;state.webglEnabled=false;return;}}setPlayerMode('webgl');state.webglFilter.start();setStatus("webgl","🎨 WebGL режим");}
 
 function setFilter(name){if(!state.webglFilter)return;state.webglFilter.setFilter(name);document.querySelectorAll(".filter-btn").forEach(b=>b.classList.toggle("active",b.dataset.filter===name));}
 
 // ========== TOBLOBURL FIX ==========
-// Загружает файл через fetch и возвращает blob URL.
-// Решает проблему: ffmpeg-core.js (UMD) внутри Worker разрешает путь к .wasm
-// относительно blob/Worker-контекста, а не от страницы.
-// Blob URL работают из любого контекста без проблем путей.
 async function toBlobURL(url, mimeType) {
     diag("⬇️ Загрузка " + url.split('/').pop() + "...");
     const response = await fetch(url);
@@ -58,7 +67,6 @@ els.lazyPanel.style.display="none";els.ffmpegPanel.style.display="block";
 
 const base=location.href.replace(/\/$/,"");
 
-// Проверяем доступность ВСЕХ файлов (включая worker)
 const ok1=await checkFile(base+"/js/ffmpeg/ffmpeg.js","ffmpeg.js");
 const ok2=await checkFile(base+"/js/ffmpeg/ffmpeg-core.js","ffmpeg-core.js");
 const ok3=await checkFile(base+"/js/ffmpeg/ffmpeg-core.wasm","ffmpeg-core.wasm");
@@ -80,9 +88,6 @@ state.ffmpeg=new FFmpeg();
 state.ffmpeg.on("log",({message})=>{appendLog(message);});
 state.ffmpeg.on("progress",({progress})=>{updateProgress(Math.round(progress*100));});
 
-// === FIX: toBlobURL — загружаем core и wasm через fetch → blob URL ===
-// Worker (814.ffmpeg.js) загружается автоматически ffmpeg.js из той же папки.
-// Worker делает importScripts(coreURL), поэтому blob URL надёжнее для подпапок Pages.
 const coreURL = await toBlobURL(base+"/js/ffmpeg/ffmpeg-core.js", "text/javascript");
 const wasmURL = await toBlobURL(base+"/js/ffmpeg/ffmpeg-core.wasm", "application/wasm");
 
@@ -97,7 +102,13 @@ setStatus("ready","✅ FFmpeg WASM готов ("+elapsed+"с)");
 els.ffmpegPanel.style.display="block";
 enableButtons(true);
 diag("✅ Инициализация завершена за "+elapsed+"с");
-if(state.currentFile){await loadFileToFfmpeg(); if(needsTranscode(state.currentFile)){els.placeholder.style.display='none';els.video.classList.add('active');els.canvas.classList.remove('active');await autoTranscode(state.currentFile);}}
+if(state.currentFile){
+    await loadFileToFfmpeg();
+    if(needsTranscode(state.currentFile)){
+        setPlayerMode('video');
+        await handleFile(state.currentFile);
+    }
+}
 }catch(err){
 console.error(err);
 diag("❌ Ошибка: "+err.message);
@@ -111,13 +122,13 @@ async function loadFileToFfmpeg(){if(!state.ffmpegReady||!state.currentFile)retu
 
 async function handleFile(file){
 if(!file)return;
-state.currentFile=file;state.currentFileName=file.name;state.isTranscoded=false;
+state.currentFile=file;state.currentFileName=file.name;state.isTranscoded=false;state.cancelled=false;
 if(state.transcodedBlobUrl){URL.revokeObjectURL(state.transcodedBlobUrl);state.transcodedBlobUrl=null;}
 const arrayBuffer=await file.arrayBuffer();state.currentFileData=new Uint8Array(arrayBuffer);
 const needsTc=needsTranscode(file);const canPlay=els.video.canPlayType(file.type);
 showStats({"Имя файла":file.name,"Размер":formatBytes(file.size),"MIME-type":file.type||"unknown","Расширение":ext(file.name),"HTML5 поддержка":canPlay||"нет","Требуется транскод":needsTc?"Да (FFmpeg WASM)":"Нет"});
-els.placeholder.style.display="none";
-if(state.webglEnabled&&state.webglFilter){els.canvas.classList.add("active");els.video.classList.remove("active");}else{els.video.classList.add("active");els.canvas.classList.remove("active");}
+
+if(state.webglEnabled&&state.webglFilter){setPlayerMode('webgl');}else{setPlayerMode('video');}
 
 if(state.ffmpegReady){await loadFileToFfmpeg();}else if(needsTc&&!state.ffmpegLazyLoaded){els.lazyPanel.style.display="block";}
 
@@ -126,31 +137,205 @@ const url=URL.createObjectURL(file);els.video.src=url;els.video.play().catch(e=>
 setStatus("ready","✅ Нативное воспроизведение (HTML5)");
 if(state.webglEnabled&&state.webglFilter){state.webglFilter.setVideo(els.video);state.webglFilter.start();}
 }else if(state.ffmpegReady){
-setStatus("transcoding","🔄 Автотранскодирование в MP4...");await autoTranscode(file);
+    // v14: streaming для больших файлов, legacy для маленьких
+    const SMALL_FILE_THRESHOLD = 64 * 1024 * 1024; // 64 MB
+    if (file.size < SMALL_FILE_THRESHOLD) {
+        setStatus("transcoding","🔄 Транскодирование (legacy, файл < 64 МБ)...");
+        setPlayerMode('video');
+        await legacyFullTranscode(file);
+    } else {
+        setStatus("transcoding","🔄 Потоковая обработка (streaming v14)...");
+        setPlayerMode('video');
+        els.btnStop.disabled = false;
+        state.cancelled = false;
+        state.streaming = true;
+        try {
+            const started = await streamingPipeline(file);
+            if (!started) {
+                diag("⚠️ Стриминг не дал результата, fallback на legacy...");
+                await legacyFullTranscode(file);
+            }
+        } catch (e) {
+            diag("❌ Ошибка стриминга: " + e.message);
+            await legacyFullTranscode(file);
+        } finally {
+            state.streaming = false;
+            els.btnStop.disabled = true;
+        }
+    }
 }else{
 setStatus(needsTc?"error":"ready",needsTc?"❌ Формат не поддерживается HTML5, нажмите «Загрузить FFmpeg»":"✅ Воспроизведение");
-if(needsTc){els.video.classList.remove("active");els.placeholder.style.display="block";els.placeholder.innerHTML="<p>❌ Формат не поддерживается</p><p class='hint'>"+file.name+" — требуется FFmpeg WASM</p>";}
+if(needsTc){setPlayerMode('placeholder');els.placeholder.innerHTML="<p>❌ Формат не поддерживается</p><p class='hint'>"+file.name+" — требуется FFmpeg WASM</p>";}
 }
 enableButtons(state.ffmpegReady);
 }
 
-async function autoTranscode(file){
-const input="input"+ext(file.name);const output="output_auto.mp4";updateProgress(0);
+// ========== v14: CODEC SNIFFER ==========
+async function sniffCodecs(file) {
+    const chunk = new Uint8Array(await file.slice(0, 2 * 1024 * 1024).arrayBuffer());
+    const text = new TextDecoder('ascii', { fatal: false }).decode(chunk);
+
+    // MKV / WebM (EBML header)
+    if (chunk.length >= 4 && chunk[0] === 0x1A && chunk[1] === 0x45 && chunk[2] === 0xDF && chunk[3] === 0xA3) {
+        const hasH264 = text.includes('V_MPEG4/ISO/AVC');
+        const hasAAC = text.includes('A_AAC');
+        const hasHEVC = text.includes('V_MPEGH/ISO/HEVC');
+        const hasAV1 = text.includes('V_AV1');
+        const hasVP9 = text.includes('V_VP9');
+        if (hasH264 && hasAAC) return { copy: true, codecs: 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"' };
+        if (hasVP9) return { copy: true, codecs: 'video/mp4; codecs="vp09.00.10.08, mp4a.40.2"' };
+        if (hasAV1) return { copy: true, codecs: 'video/mp4; codecs="av01.0.04M.08, mp4a.40.2"' };
+        if (hasHEVC) return { copy: false };
+        return { copy: false };
+    }
+
+    // MP4 / MOV (ftyp)
+    if (text.includes('ftyp') || text.includes('moov')) {
+        const hasAVC = text.includes('avc1') || text.includes('AVC1');
+        const hasAAC = text.includes('mp4a') || text.includes('AAC');
+        const hasHEVC = text.includes('hvc1') || text.includes('hev1');
+        if (hasHEVC) return { copy: false };
+        if (hasAVC && hasAAC) return { copy: true, codecs: 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"' };
+        if (hasAVC) return { copy: true, codecs: 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"' };
+        return { copy: false };
+    }
+
+    // AVI (RIFF ... AVI)
+    if (text.includes('RIFF') && text.includes('AVI ')) {
+        const hasH264 = text.includes('H264') || text.includes('AVC1') || text.includes('avc1');
+        const hasAAC = text.includes('AAC');
+        const hasXVID = text.includes('XVID') || text.includes('xvid');
+        const hasDIVX = text.includes('DIVX') || text.includes('divx');
+        const hasMJPG = text.includes('MJPG') || text.includes('mjpg');
+        if (hasH264 && hasAAC) return { copy: true, codecs: 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"' };
+        if (hasXVID || hasDIVX || hasMJPG) return { copy: false };
+        return { copy: false };
+    }
+
+    // Любое сомнение → транскод
+    return { copy: false };
+}
+
+// ========== v14: MP4 INIT/SEG SPLITTER ==========
+function splitInitAndSeg(u8) {
+    let i = 0;
+    while (i + 8 <= u8.length) {
+        const size = (u8[i] << 24 | u8[i + 1] << 16 | u8[i + 2] << 8 | u8[i + 3]) >>> 0;
+        const type = String.fromCharCode(u8[i + 4], u8[i + 5], u8[i + 6], u8[i + 7]);
+        if (type === 'moof') return { init: u8.slice(0, i), seg: u8.slice(i) };
+        i += size > 0 ? size : 8;
+    }
+    return { init: u8, seg: new Uint8Array(0) };
+}
+
+// ========== v14: SOURCEBUFFER APPEND QUEUE ==========
+function appendQ(sb, buf) {
+    return new Promise((res, rej) => {
+        const fail = () => rej(sb.error || new Error('SourceBuffer error'));
+        sb.addEventListener('error', fail, { once: true });
+        const go = () => {
+            sb.onupdateend = () => { sb.removeEventListener('error', fail); res(); };
+            sb.appendBuffer(buf);
+        };
+        sb.updating ? sb.addEventListener('updateend', go, { once: true }) : go();
+    });
+}
+
+// ========== v14: STREAMING PIPELINE ==========
+async function streamingPipeline(file, retryTranscode = false) {
+    const ms = new MediaSource();
+    const msUrl = URL.createObjectURL(ms);
+    els.video.src = msUrl;
+    await new Promise(r => ms.onsourceopen = r);
+
+    let sb;
+    let copy = false;
+    let codecsStr = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+
+    if (!retryTranscode) {
+        const sniffed = await sniffCodecs(file);
+        copy = sniffed.copy;
+        if (copy && sniffed.codecs) codecsStr = sniffed.codecs;
+    }
+
+    const sbCodecs = copy ? codecsStr : 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+
+    try {
+        sb = ms.addSourceBuffer(sbCodecs);
+    } catch (e) {
+        if (copy && !retryTranscode) {
+            diag('⚠️ Copy-путь не сработал (' + e.message + '), пробуем транскод...');
+            try { ms.endOfStream(); } catch {}
+            URL.revokeObjectURL(msUrl);
+            return streamingPipeline(file, true);
+        }
+        throw e;
+    }
+
+    await state.ffmpeg.mount('WORKERFS', { files: [file] }, '/work');
+    const IN = '/work/' + file.name;
+    const ARGS = copy
+        ? ['-c', 'copy']
+        : ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-c:a', 'aac', '-b:a', '128k'];
+    const D = copy ? 60 : 10;
+
+    let started = false;
+    for (let T = 0; !state.cancelled; T += D) {
+        let segU8;
+        try {
+            await state.ffmpeg.exec([
+                '-ss', String(T), '-i', IN, '-t', String(D),
+                ...ARGS,
+                '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov', '/seg.mp4'
+            ]);
+            segU8 = new Uint8Array(await state.ffmpeg.readFile('/seg.mp4'));
+            await state.ffmpeg.deleteFile('/seg.mp4');
+        } catch (e) {
+            diag('ℹ️ Конец файла или ошибка чанка: ' + (e.message || e));
+            break;
+        }
+        if (!segU8 || segU8.length < 200) break;
+
+        const { init, seg } = splitInitAndSeg(segU8);
+        if (!started) {
+            await appendQ(sb, init);
+            started = true;
+        }
+        if (!copy) sb.timestampOffset = T;
+        if (seg.length) await appendQ(sb, seg);
+        if (els.video.paused) els.video.play().catch(() => {});
+        updateProgress(0, `Обработано ~${T + D} с`);
+        setStatus('transcoding', `🔄 Обработано ~${T + D} с`);
+    }
+
+    if (started) {
+        try { ms.endOfStream(); } catch {}
+    }
+    await state.ffmpeg.unmount('/work').catch(() => {});
+    return started;
+}
+
+// ========== v12 LEGACY: FULL TRANSCODE ==========
+async function legacyFullTranscode(file){
+if(!file)return;
+const input="input"+ext(file.name);
+const output="output_legacy.mp4";
+updateProgress(0);
 try{
 await state.ffmpeg.exec(["-i",input,"-c:v","libx264","-preset","ultrafast","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart","-y",output]);
 const data=await state.ffmpeg.readFile(output);
 const blob=new Blob([data.buffer],{type:"video/mp4"});
 state.transcodedBlobUrl=URL.createObjectURL(blob);
-els.placeholder.style.display='none';els.video.classList.add('active');els.canvas.classList.remove('active');
+setPlayerMode('video');
 els.video.src=state.transcodedBlobUrl;state.isTranscoded=true;
 els.video.play().catch(e=>console.log('Autoplay blocked:',e));
-showStats({"Имя файла":file.name,"Размер оригинала":formatBytes(file.size),"Размер после транскода":formatBytes(blob.size),"Режим":"FFmpeg WASM транскод → H.264/AAC"});
+showStats({"Имя файла":file.name,"Размер оригинала":formatBytes(file.size),"Размер после транскода":formatBytes(blob.size),"Режим":"FFmpeg WASM legacy транскод → H.264/AAC"});
 setStatus("ready","✅ Транскодировано и воспроизводится");
 if(state.webglEnabled&&state.webglFilter){state.webglFilter.setVideo(els.video);state.webglFilter.start();}
-}catch(e){appendLog("Ошибка транскода: "+e.message);setStatus("error","❌ Ошибка транскодирования");}finally{resetProgress();}
+}catch(e){appendLog("Ошибка legacy транскода: "+e.message);setStatus("error","❌ Ошибка транскодирования");}finally{resetProgress();}
 }
 
-async function transcodeToMp4(){if(!state.ffmpegReady||!state.currentFile)return;const input="input"+ext(state.currentFileName);const output="output_manual.mp4";setStatus("transcoding","🔄 Конвертация в MP4...");updateProgress(0);els.resultPanel.style.display="none";try{await state.ffmpeg.exec(["-i",input,"-c:v","libx264","-preset","fast","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart","-y",output]);const data=await state.ffmpeg.readFile(output);const blob=new Blob([data.buffer],{type:"video/mp4"});const url=URL.createObjectURL(blob);els.placeholder.style.display='none';els.video.classList.add('active');els.canvas.classList.remove('active');els.video.src=url;state.transcodedBlobUrl=url;state.isTranscoded=true;els.video.play().catch(e=>console.log('Autoplay blocked:',e));showResult(data,"video/mp4","transcoded.mp4");setStatus("ready","✅ Конвертация завершена");if(state.webglEnabled&&state.webglFilter){state.webglFilter.setVideo(els.video);state.webglFilter.start();}}catch(e){appendLog("Ошибка: "+e.message);setStatus("error","❌ Ошибка конвертации");}finally{resetProgress();}}
+async function transcodeToMp4(){if(!state.ffmpegReady||!state.currentFile)return;const input="input"+ext(state.currentFileName);const output="output_manual.mp4";setStatus("transcoding","🔄 Конвертация в MP4...");updateProgress(0);els.resultPanel.style.display="none";try{await state.ffmpeg.exec(["-i",input,"-c:v","libx264","-preset","fast","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart","-y",output]);const data=await state.ffmpeg.readFile(output);const blob=new Blob([data.buffer],{type:"video/mp4"});const url=URL.createObjectURL(blob);setPlayerMode('video');els.video.src=url;state.transcodedBlobUrl=url;state.isTranscoded=true;els.video.play().catch(e=>console.log('Autoplay blocked:',e));showResult(data,"video/mp4","transcoded.mp4");setStatus("ready","✅ Конвертация завершена");if(state.webglEnabled&&state.webglFilter){state.webglFilter.setVideo(els.video);state.webglFilter.start();}}catch(e){appendLog("Ошибка: "+e.message);setStatus("error","❌ Ошибка конвертации");}finally{resetProgress();}}
 
 async function extractThumbnails(){if(!state.ffmpegReady||!state.currentFile)return;const input="input"+ext(state.currentFileName);setStatus("transcoding","🖼 Извлечение скриншотов...");updateProgress(0);els.thumbsPanel.style.display="none";els.thumbsGrid.innerHTML="";try{let duration=60;try{await state.ffmpeg.exec(["-i",input]);}catch(e){}const logText=els.logOutput.textContent;const durMatch=logText.match(/Duration: (\d+):(\d+):(\d+\.\d+)/);if(durMatch){duration=parseInt(durMatch[1])*3600+parseInt(durMatch[2])*60+parseFloat(durMatch[3]);}const count=8;const step=duration/(count+1);for(let i=1;i<=count;i++){const time=(step*i).toFixed(2);const outName="thumb_"+i+".jpg";await state.ffmpeg.exec(["-ss",String(time),"-i",input,"-vframes","1","-q:v","2","-y",outName]);const data=await state.ffmpeg.readFile(outName);const blob=new Blob([data.buffer],{type:"image/jpeg"});const url=URL.createObjectURL(blob);const div=document.createElement("div");div.className="thumb-item";div.innerHTML='<img src="'+url+'" alt=""><div class="thumb-label">'+formatTime(time)+"</div>";els.thumbsGrid.appendChild(div);updateProgress(Math.round((i/count)*100));}els.thumbsPanel.style.display="block";setStatus("ready","✅ Скриншоты готовы");}catch(e){appendLog("Ошибка: "+e.message);setStatus("error","❌ Ошибка извлечения скриншотов");}finally{resetProgress();}}
 
