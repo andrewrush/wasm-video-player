@@ -1,4 +1,3 @@
-/* WASM Video Player - FFmpeg WASM self-hosted */
 const $ = (sel) => document.querySelector(sel);
 
 const state = {
@@ -13,6 +12,8 @@ const state = {
 
 const els = {
     status: $("#status-bar"),
+    diagPanel: $("#diag-panel"),
+    diagContent: $("#diag-content"),
     dropZone: $("#drop-zone"),
     fileInput: $("#file-input"),
     video: $("#video-player"),
@@ -45,6 +46,11 @@ function setStatus(cls, text) {
     console.log("[Status]", text);
 }
 
+function diag(msg) {
+    els.diagContent.innerHTML += "<p>" + msg + "</p>";
+    console.log("[Diag]", msg);
+}
+
 function appendLog(msg) {
     els.logOutput.textContent += msg + "\n";
     els.logOutput.scrollTop = els.logOutput.scrollHeight;
@@ -68,18 +74,65 @@ function enableButtons(enabled) {
     });
 }
 
-async function init() {
-    setStatus("loading", "Загрузка FFmpeg WASM...");
-    console.log("[Init] Starting...");
+async function checkFile(url, name) {
+    try {
+        diag("Проверка " + name + "...");
+        const r = await fetch(url, { method: "HEAD" });
+        if (!r.ok) {
+            diag("❌ " + name + ": HTTP " + r.status);
+            return false;
+        }
+        const ct = r.headers.get("content-type") || "unknown";
+        const len = r.headers.get("content-length") || "?";
+        diag("✅ " + name + " — " + ct + " (" + len + " bytes)");
+        return true;
+    } catch (e) {
+        diag("❌ " + name + ": " + e.message);
+        return false;
+    }
+}
 
-    const wasmSupported = typeof WebAssembly === "object" && typeof WebAssembly.instantiate === "function";
-    if (!wasmSupported) {
-        setStatus("fallback", "⚡ HTML5 режим (WASM не поддерживается)");
+async function init() {
+    setStatus("loading", "Диагностика файлов...");
+    els.diagPanel.style.display = "block";
+    els.diagContent.innerHTML = "";
+
+    const base = location.href.replace(/\/$/, "");
+    const ffmpegJsURL = base + "/js/ffmpeg/ffmpeg.js";
+    const coreURL = base + "/js/ffmpeg/ffmpeg-core.js";
+    const wasmURL = base + "/js/ffmpeg/ffmpeg-core.wasm";
+
+    diag("Base URL: " + base);
+
+    // Проверяем доступность файлов
+    const ok1 = await checkFile(ffmpegJsURL, "ffmpeg.js");
+    const ok2 = await checkFile(coreURL, "ffmpeg-core.js");
+    const ok3 = await checkFile(wasmURL, "ffmpeg-core.wasm");
+
+    if (!ok1 || !ok2 || !ok3) {
+        setStatus("error", "❌ Не все файлы доступны. Подождите 2 мин и обновите (кеш GitHub Pages).");
         return;
     }
 
+    const wasmSupported = typeof WebAssembly === "object" && typeof WebAssembly.instantiate === "function";
+    if (!wasmSupported) {
+        diag("❌ WebAssembly не поддерживается браузером");
+        setStatus("fallback", "⚡ HTML5 режим (WASM не поддерживается)");
+        return;
+    }
+    diag("✅ WebAssembly поддерживается");
+
+    // Проверяем, загрузился ли ffmpeg.js
+    if (typeof FFmpegWASM === "undefined") {
+        diag("❌ FFmpegWASM не определён — ffmpeg.js не загрузился");
+        setStatus("error", "❌ ffmpeg.js не загрузился");
+        return;
+    }
+    diag("✅ FFmpegWASM определён");
+
+    setStatus("loading", "Загрузка FFmpeg WASM (~30MB)...");
+
     try {
-        console.log("[Init] Creating FFmpeg instance...");
         const { FFmpeg } = FFmpegWASM;
         state.ffmpeg = new FFmpeg();
 
@@ -87,39 +140,32 @@ async function init() {
             appendLog(message);
             console.log("[FFmpeg]", message);
         });
-
         state.ffmpeg.on("progress", ({ progress }) => {
             updateProgress(Math.round(progress * 100));
         });
 
-        // Self-hosted paths relative to current page
-        const base = location.href.replace(/\/$/, "");
-        const coreURL = base + "/js/ffmpeg/ffmpeg-core.js";
-        const wasmURL = base + "/js/ffmpeg/ffmpeg-core.wasm";
-        console.log("[Init] coreURL:", coreURL);
-        console.log("[Init] wasmURL:", wasmURL);
-
-        setStatus("loading", "Загрузка FFmpeg WASM (~30MB, 1–2 мин)...");
-
-        const loadPromise = state.ffmpeg.load({ coreURL, wasmURL });
-        const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error("Timeout: FFmpeg WASM не загрузился за 120 секунд. Проверьте соединение.")), 120000);
-        });
+        // Загружаем .wasm вручную как ArrayBuffer — это надёжнее
+        diag("Загрузка wasm вручную через fetch...");
+        const wasmResp = await fetch(wasmURL);
+        if (!wasmResp.ok) throw new Error("wasm fetch failed: " + wasmResp.status);
+        const wasmBinary = await wasmResp.arrayBuffer();
+        diag("✅ wasm загружен: " + wasmBinary.byteLength + " bytes");
 
         const startTime = Date.now();
-        await Promise.race([loadPromise, timeoutPromise]);
+        await state.ffmpeg.load({ coreURL: coreURL, wasmBinary: wasmBinary });
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
         state.ffmpegReady = true;
-        setStatus("ready", "✅ FFmpeg WASM готов (" + elapsed + "с) — MKV/HEVC/AVI playable");
+        setStatus("ready", "✅ FFmpeg WASM готов (" + elapsed + "с)");
         els.ffmpegPanel.style.display = "block";
         enableButtons(true);
-        console.log("[Init] Success in", elapsed, "seconds");
+        diag("✅ Инициализация завершена за " + elapsed + "с");
     } catch (err) {
-        console.error("[Init] Error:", err);
+        console.error(err);
+        diag("❌ Ошибка инициализации: " + err.message);
         setStatus("error", "❌ " + (err.message || "FFmpeg WASM недоступен"));
-        els.ffmpegPanel.style.display = "none";
-        enableButtons(false);
+        appendLog("ERROR: " + err.message);
+        if (err.stack) appendLog("STACK: " + err.stack);
     }
 
     setupEvents();
