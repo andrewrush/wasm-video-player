@@ -51,6 +51,22 @@
             </div>
         </div>
 
+        <div id="settings-panel" class="panel">
+            <h3>⚙️ Настройки обработки</h3>
+            <div class="settings-row">
+                <label for="mode-select">Режим:</label>
+                <select id="mode-select">
+                    <option value="auto" selected>Авто (по размеру файла)</option>
+                    <option value="streaming">Всегда стриминг (MSE)</option>
+                    <option value="legacy">Всегда полный транскод</option>
+                </select>
+            </div>
+            <div class="settings-row">
+                <label for="threshold-input">Порог стриминга (МБ):</label>
+                <input type="number" id="threshold-input" value="64" min="1" max="2048">
+            </div>
+        </div>
+
         <div id="stats-panel" class="panel" style="display:none;">
             <h3>📊 Nerd Stats</h3>
             <div class="stats-grid" id="stats-grid"></div>

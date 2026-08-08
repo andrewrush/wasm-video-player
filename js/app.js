@@ -1,6 +1,6 @@
 const $=(sel)=>document.querySelector(sel);
-const state={ffmpeg:null,ffmpegReady:false,currentFile:null,currentFileName:"",currentFileData:null,isTranscoded:false,transcodedBlobUrl:null,webglFilter:null,webglEnabled:false,cancelled:false,streaming:false,html5Failed:false};
-const els={status:$("#status-bar"),diagPanel:$("#diag-panel"),diagContent:$("#diag-content"),dropZone:$("#drop-zone"),fileInput:$("#file-input"),video:$("#video-player"),canvas:$("#gl-canvas"),placeholder:$("#placeholder"),decoderError:$("#decoder-error"),decoderMsg:$("#decoder-msg"),btnTryFfmpeg:$("#btn-try-ffmpeg"),statsPanel:$("#stats-panel"),statsGrid:$("#stats-grid"),ffmpegPanel:$("#ffmpeg-panel"),btnTranscode:$("#btn-transcode"),btnThumbs:$("#btn-thumbs"),btnGif:$("#btn-gif"),btnInfo:$("#btn-info"),btnStop:$("#btn-stop"),btnLoadFfmpeg:$("#btn-load-ffmpeg"),progress:$("#progress"),progressFill:$("#progress-fill"),progressText:$("#progress-text"),logOutput:$("#log-output"),resultPanel:$("#result-panel"),resultContent:$("#result-content"),thumbsPanel:$("#thumbs-panel"),thumbsGrid:$("#thumbs-grid"),webglPanel:$("#webgl-panel"),webglToggle:$("#webgl-toggle"),filterGrid:$("#filter-grid"),lazyPanel:$("#lazy-panel"),playerStage:$("#player-stage")};
+const state={ffmpeg:null,ffmpegReady:false,currentFile:null,currentFileName:"",currentFileData:null,isTranscoded:false,transcodedBlobUrl:null,webglFilter:null,webglEnabled:false,cancelled:false,streaming:false,html5Failed:false,preferredMode:'auto',streamingThresholdMB:64};
+const els={status:$("#status-bar"),diagPanel:$("#diag-panel"),diagContent:$("#diag-content"),dropZone:$("#drop-zone"),fileInput:$("#file-input"),video:$("#video-player"),canvas:$("#gl-canvas"),placeholder:$("#placeholder"),decoderError:$("#decoder-error"),decoderMsg:$("#decoder-msg"),btnTryFfmpeg:$("#btn-try-ffmpeg"),statsPanel:$("#stats-panel"),statsGrid:$("#stats-grid"),ffmpegPanel:$("#ffmpeg-panel"),btnTranscode:$("#btn-transcode"),btnThumbs:$("#btn-thumbs"),btnGif:$("#btn-gif"),btnInfo:$("#btn-info"),btnStop:$("#btn-stop"),progress:$("#progress"),progressFill:$("#progress-fill"),progressText:$("#progress-text"),logOutput:$("#log-output"),resultPanel:$("#result-panel"),resultContent:$("#result-content"),thumbsPanel:$("#thumbs-panel"),thumbsGrid:$("#thumbs-grid"),webglPanel:$("#webgl-panel"),webglToggle:$("#webgl-toggle"),filterGrid:$("#filter-grid"),playerStage:$("#player-stage"),modeSelect:$("#mode-select"),thresholdInput:$("#threshold-input")};
 
 function setStatus(cls,text){els.status.className="status "+cls;els.status.textContent=text;console.log("[Status]",text);}
 function diag(msg){const p=document.createElement("p");p.textContent=msg;els.diagContent.appendChild(p);console.log("[Diag]",msg);}
@@ -9,18 +9,9 @@ function updateProgress(pct,label){els.progress.style.display="flex";els.progres
 function resetProgress(){els.progress.style.display="none";els.progressFill.style.width="0%";els.progressText.textContent="0%";}
 function enableButtons(enabled){[els.btnTranscode,els.btnThumbs,els.btnGif,els.btnInfo].forEach(b=>b.disabled=!enabled||!state.currentFile);}
 
-function setPlayerMode(mode){
-    els.playerStage.dataset.mode = mode;
-}
-
-function showDecoderError(msg){
-    els.decoderMsg.textContent = msg || "Decoder closed unexpectedly";
-    els.decoderError.style.display = "flex";
-    setPlayerMode('placeholder');
-}
-function hideDecoderError(){
-    els.decoderError.style.display = "none";
-}
+function setPlayerMode(mode){els.playerStage.dataset.mode = mode;}
+function showDecoderError(msg){els.decoderMsg.textContent = msg || "Decoder closed unexpectedly";els.decoderError.style.display = "flex";setPlayerMode('placeholder');}
+function hideDecoderError(){els.decoderError.style.display = "none";}
 
 async function checkFile(url,name){try{diag("Проверка "+name+"...");const r=await fetch(url,{method:"HEAD"});if(!r.ok){diag("❌ "+name+": HTTP "+r.status);return false;}const ct=r.headers.get("content-type")||"unknown";const len=r.headers.get("content-length")||"?";diag("✅ "+name+" — "+ct+" ("+formatBytes(parseInt(len)||0)+")");return true;}catch(e){diag("❌ "+name+": "+e.message);return false;}}
 
@@ -40,9 +31,13 @@ els.btnInfo.addEventListener("click",getFfmpegInfo);
 els.btnTryFfmpeg.addEventListener("click",tryFfmpegFallback);
 els.btnStop.addEventListener("click",stopStreaming);
 els.webglToggle.addEventListener("change",toggleWebGL);
+
+// Settings
+els.modeSelect.addEventListener("change",e=>{state.preferredMode=e.target.value;diag("Режим: "+state.preferredMode);});
+els.thresholdInput.addEventListener("change",e=>{state.streamingThresholdMB=parseInt(e.target.value)||64;diag("Порог стриминга: "+state.streamingThresholdMB+" МБ");});
+
 document.querySelectorAll(".filter-btn").forEach(b=>b.addEventListener("click",()=>setFilter(b.dataset.filter)));
 
-// === Ключевое: ловим ошибки HTML5 video ===
 els.video.addEventListener('error', onVideoError);
 els.video.addEventListener('loadeddata', () => { hideDecoderError(); state.html5Failed = false; });
 }
@@ -50,22 +45,16 @@ els.video.addEventListener('loadeddata', () => { hideDecoderError(); state.html5
 function onVideoError(e){
     const err = els.video.error;
     if (!err) return;
-    const msgs = {
-        1: "Прервано загрузкой",
-        2: "Ошибка сети",
-        3: "Ошибка декодирования",
-        4: "Формат не поддерживается"
-    };
-    const msg = msgs[err.code] || ("Decoder error code " + err.code);
-    diag("❌ HTML5 video error: " + msg);
+    const msgs = {1:"Прервано загрузкой",2:"Ошибка сети",3:"Ошибка декодирования",4:"Формат не поддерживается"};
+    const msg = msgs[err.code] || ("Decoder error code "+err.code);
+    diag("❌ HTML5 video error: "+msg);
     state.html5Failed = true;
     showDecoderError(msg);
-    setStatus("error","❌ " + msg);
+    setStatus("error","❌ "+msg);
 }
 
 function stopStreaming(){
-    state.cancelled = true;
-    state.streaming = false;
+    state.cancelled = true;state.streaming = false;
     setStatus("ready","⏹ Остановлено пользователем");
     els.btnStop.disabled = true;
 }
@@ -75,16 +64,15 @@ function toggleWebGL(){state.webglEnabled=els.webglToggle.checked;if(!state.webg
 function setFilter(name){if(!state.webglFilter)return;state.webglFilter.setFilter(name);document.querySelectorAll(".filter-btn").forEach(b=>b.classList.toggle("active",b.dataset.filter===name));}
 
 async function toBlobURL(url, mimeType) {
-    diag("⬇️ Загрузка " + url.split('/').pop() + "...");
+    diag("⬇️ Загрузка "+url.split('/').pop()+"...");
     const response = await fetch(url);
-    if (!response.ok) throw new Error("HTTP " + response.status);
+    if (!response.ok) throw new Error("HTTP "+response.status);
     const blob = await response.blob();
-    const blobURL = URL.createObjectURL(new Blob([blob], { type: mimeType }));
-    diag("✅ " + url.split('/').pop() + " → blob URL (" + formatBytes(blob.size) + ")");
+    const blobURL = URL.createObjectURL(new Blob([blob], {type:mimeType}));
+    diag("✅ "+url.split('/').pop()+" → blob URL ("+formatBytes(blob.size)+")");
     return blobURL;
 }
 
-// ========== EAGER LOAD: FFmpeg при старте страницы ==========
 async function initFfmpeg(){
 if(state.ffmpegReady){diag("ℹ️ FFmpeg уже загружен");return;}
 setStatus("loading","Загрузка FFmpeg WASM (~32MB)...");
@@ -92,7 +80,6 @@ els.diagPanel.style.display="block";els.diagContent.innerHTML="";
 els.ffmpegPanel.style.display="block";
 
 const base=location.href.replace(/\/$/,"");
-
 const ok1=await checkFile(base+"/js/ffmpeg/ffmpeg.js","ffmpeg.js");
 const ok2=await checkFile(base+"/js/ffmpeg/ffmpeg-core.js","ffmpeg-core.js");
 const ok3=await checkFile(base+"/js/ffmpeg/ffmpeg-core.wasm","ffmpeg-core.wasm");
@@ -118,17 +105,13 @@ const wasmURL = await toBlobURL(base+"/js/ffmpeg/ffmpeg-core.wasm", "application
 
 diag("Вызов ffmpeg.load({coreURL, wasmURL})...");
 const t0=performance.now();
-
 await state.ffmpeg.load({coreURL:coreURL,wasmURL:wasmURL});
-
 const elapsed=((performance.now()-t0)/1000).toFixed(1);
 state.ffmpegReady=true;
 setStatus("ready","✅ FFmpeg WASM готов ("+elapsed+"с)");
 enableButtons(true);
 diag("✅ Инициализация завершена за "+elapsed+"с");
-if(state.currentFile && state.html5Failed){
-    await tryFfmpegFallback();
-}
+if(state.currentFile && state.html5Failed){await tryFfmpegFallback();}
 }catch(err){
 console.error(err);
 diag("❌ Ошибка: "+err.message);
@@ -140,7 +123,6 @@ if(err.stack)appendLog("STACK: "+err.stack);
 
 async function loadFileToFfmpeg(){if(!state.ffmpegReady||!state.currentFile)return;const inputName="input"+ext(state.currentFileName);await state.ffmpeg.writeFile(inputName,state.currentFileData);appendLog("Файл загружен в FFmpeg FS: "+inputName);}
 
-// ========== HANDLE FILE: пробуем HTML5 для ВСЕХ ==========
 async function handleFile(file){
 if(!file)return;
 state.currentFile=file;state.currentFileName=file.name;state.isTranscoded=false;state.html5Failed=false;state.cancelled=false;
@@ -150,196 +132,182 @@ const arrayBuffer=await file.arrayBuffer();state.currentFileData=new Uint8Array(
 
 showStats({"Имя файла":file.name,"Размер":formatBytes(file.size),"MIME-type":file.type||"unknown","Расширение":ext(file.name)});
 
-// Пробуем HTML5 для ЛЮБОГО файла
 setPlayerMode('video');
 const url=URL.createObjectURL(file);
 els.video.src=url;
 els.video.play().catch(e=>console.log('Autoplay blocked:',e));
 setStatus("ready","🎬 Пробуем HTML5 воспроизведение...");
 
-// Ждём либо loadeddata (успех), либо error (провал)
-// Если FFmpeg ещё не загружен — начинаем загрузку в фоне
 if(!state.ffmpegReady && !state.ffmpegLoading){
     state.ffmpegLoading = true;
-    initFfmpeg().then(() => { state.ffmpegLoading = false; });
+    initFfmpeg().then(()=>{state.ffmpegLoading=false;});
 }
-
 if(state.ffmpegReady){await loadFileToFfmpeg();}
 enableButtons(state.ffmpegReady);
 }
 
-// ========== FALLBACK: пользователь нажал «Попробовать FFmpeg» ==========
+// ========== FALLBACK ==========
 async function tryFfmpegFallback(){
-    if(!state.currentFile || !state.ffmpegReady){
-        diag("⏳ FFmpeg ещё загружается, подождите...");
-        return;
+    if(!state.currentFile) return;
+
+    // Ждём FFmpeg если ещё грузится
+    if(!state.ffmpegReady){
+        setStatus("loading","⏳ Загрузка FFmpeg WASM...");
+        els.decoderMsg.textContent = "Загрузка FFmpeg WASM, подождите...";
+        for(let i=0; i<120 && !state.ffmpegReady; i++){
+            await new Promise(r => setTimeout(r, 500));
+        }
+        if(!state.ffmpegReady){
+            diag("❌ FFmpeg не загрузился за 60 секунд");
+            setStatus("error","❌ FFmpeg недоступен");
+            els.decoderMsg.textContent = "FFmpeg не загрузился. Проверьте соединение.";
+            return;
+        }
     }
+
     hideDecoderError();
     setPlayerMode('video');
     await loadFileToFfmpeg();
 
-    const file = state.currentFile;
-    const SMALL_FILE_THRESHOLD = 64 * 1024 * 1024;
+    const thresholdBytes = state.streamingThresholdMB * 1024 * 1024;
+    const useStreaming = state.preferredMode === 'streaming' ||
+        (state.preferredMode === 'auto' && state.currentFile.size >= thresholdBytes);
 
-    if (file.size < SMALL_FILE_THRESHOLD) {
-        setStatus("transcoding","🔄 Транскодирование (legacy)...");
-        await legacyFullTranscode(file);
-    } else {
+    diag(`Режим: ${state.preferredMode}, файл ${formatBytes(state.currentFile.size)}, порог ${state.streamingThresholdMB} МБ → ${useStreaming ? 'стриминг' : 'legacy'}`);
+
+    if(useStreaming){
         setStatus("transcoding","🔄 Потоковая обработка (streaming)...");
         els.btnStop.disabled = false;
-        state.cancelled = false;
-        state.streaming = true;
-        try {
-            const started = await streamingPipeline(file);
-            if (!started) {
+        state.cancelled = false; state.streaming = true;
+        try{
+            const started = await streamingPipeline(state.currentFile);
+            if(!started){
                 diag("⚠️ Стриминг не дал результата, fallback на legacy...");
-                await legacyFullTranscode(file);
+                await legacyFullTranscode(state.currentFile);
             }
-        } catch (e) {
-            diag("❌ Ошибка стриминга: " + e.message);
-            await legacyFullTranscode(file);
-        } finally {
+        }catch(e){
+            diag("❌ Ошибка стриминга: "+e.message);
+            await legacyFullTranscode(state.currentFile);
+        }finally{
             state.streaming = false;
             els.btnStop.disabled = true;
         }
+    }else{
+        setStatus("transcoding","🔄 Транскодирование (legacy)...");
+        await legacyFullTranscode(state.currentFile);
     }
 }
 
 // ========== CODEC SNIFFER ==========
-async function sniffCodecs(file) {
-    const chunk = new Uint8Array(await file.slice(0, 2 * 1024 * 1024).arrayBuffer());
-    const text = new TextDecoder('ascii', { fatal: false }).decode(chunk);
-
-    if (chunk.length >= 4 && chunk[0] === 0x1A && chunk[1] === 0x45 && chunk[2] === 0xDF && chunk[3] === 0xA3) {
-        const hasH264 = text.includes('V_MPEG4/ISO/AVC');
-        const hasAAC = text.includes('A_AAC');
-        const hasHEVC = text.includes('V_MPEGH/ISO/HEVC');
-        const hasAV1 = text.includes('V_AV1');
-        const hasVP9 = text.includes('V_VP9');
-        if (hasH264 && hasAAC) return { copy: true, codecs: 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"' };
-        if (hasVP9) return { copy: true, codecs: 'video/mp4; codecs="vp09.00.10.08, mp4a.40.2"' };
-        if (hasAV1) return { copy: true, codecs: 'video/mp4; codecs="av01.0.04M.08, mp4a.40.2"' };
-        if (hasHEVC) return { copy: false };
-        return { copy: false };
+async function sniffCodecs(file){
+    const chunk = new Uint8Array(await file.slice(0, 2*1024*1024).arrayBuffer());
+    const text = new TextDecoder('ascii',{fatal:false}).decode(chunk);
+    if(chunk.length>=4 && chunk[0]===0x1A && chunk[1]===0x45 && chunk[2]===0xDF && chunk[3]===0xA3){
+        const hasH264=text.includes('V_MPEG4/ISO/AVC');
+        const hasAAC=text.includes('A_AAC');
+        const hasHEVC=text.includes('V_MPEGH/ISO/HEVC');
+        const hasAV1=text.includes('V_AV1');
+        const hasVP9=text.includes('V_VP9');
+        if(hasH264&&hasAAC) return {copy:true, codecs:'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'};
+        if(hasVP9) return {copy:true, codecs:'video/mp4; codecs="vp09.00.10.08, mp4a.40.2"'};
+        if(hasAV1) return {copy:true, codecs:'video/mp4; codecs="av01.0.04M.08, mp4a.40.2"'};
+        if(hasHEVC) return {copy:false};
+        return {copy:false};
     }
-
-    if (text.includes('ftyp') || text.includes('moov')) {
-        const hasAVC = text.includes('avc1') || text.includes('AVC1');
-        const hasAAC = text.includes('mp4a') || text.includes('AAC');
-        const hasHEVC = text.includes('hvc1') || text.includes('hev1');
-        if (hasHEVC) return { copy: false };
-        if (hasAVC && hasAAC) return { copy: true, codecs: 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"' };
-        if (hasAVC) return { copy: true, codecs: 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"' };
-        return { copy: false };
+    if(text.includes('ftyp')||text.includes('moov')){
+        const hasAVC=text.includes('avc1')||text.includes('AVC1');
+        const hasAAC=text.includes('mp4a')||text.includes('AAC');
+        const hasHEVC=text.includes('hvc1')||text.includes('hev1');
+        if(hasHEVC) return {copy:false};
+        if(hasAVC&&hasAAC) return {copy:true, codecs:'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'};
+        if(hasAVC) return {copy:true, codecs:'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'};
+        return {copy:false};
     }
-
-    if (text.includes('RIFF') && text.includes('AVI ')) {
-        const hasH264 = text.includes('H264') || text.includes('AVC1') || text.includes('avc1');
-        const hasAAC = text.includes('AAC');
-        const hasXVID = text.includes('XVID') || text.includes('xvid');
-        const hasDIVX = text.includes('DIVX') || text.includes('divx');
-        const hasMJPG = text.includes('MJPG') || text.includes('mjpg');
-        if (hasH264 && hasAAC) return { copy: true, codecs: 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"' };
-        if (hasXVID || hasDIVX || hasMJPG) return { copy: false };
-        return { copy: false };
+    if(text.includes('RIFF')&&text.includes('AVI ')){
+        const hasH264=text.includes('H264')||text.includes('AVC1')||text.includes('avc1');
+        const hasAAC=text.includes('AAC');
+        const hasXVID=text.includes('XVID')||text.includes('xvid');
+        const hasDIVX=text.includes('DIVX')||text.includes('divx');
+        const hasMJPG=text.includes('MJPG')||text.includes('mjpg');
+        if(hasH264&&hasAAC) return {copy:true, codecs:'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'};
+        if(hasXVID||hasDIVX||hasMJPG) return {copy:false};
+        return {copy:false};
     }
-
-    return { copy: false };
+    return {copy:false};
 }
 
-function splitInitAndSeg(u8) {
-    let i = 0;
-    while (i + 8 <= u8.length) {
-        const size = (u8[i] << 24 | u8[i + 1] << 16 | u8[i + 2] << 8 | u8[i + 3]) >>> 0;
-        const type = String.fromCharCode(u8[i + 4], u8[i + 5], u8[i + 6], u8[i + 7]);
-        if (type === 'moof') return { init: u8.slice(0, i), seg: u8.slice(i) };
-        i += size > 0 ? size : 8;
+function splitInitAndSeg(u8){
+    let i=0;
+    while(i+8<=u8.length){
+        const size=(u8[i]<<24|u8[i+1]<<16|u8[i+2]<<8|u8[i+3])>>>0;
+        const type=String.fromCharCode(u8[i+4],u8[i+5],u8[i+6],u8[i+7]);
+        if(type==='moof') return {init:u8.slice(0,i), seg:u8.slice(i)};
+        i+=size>0?size:8;
     }
-    return { init: u8, seg: new Uint8Array(0) };
+    return {init:u8, seg:new Uint8Array(0)};
 }
 
-function appendQ(sb, buf) {
-    return new Promise((res, rej) => {
-        const fail = () => rej(sb.error || new Error('SourceBuffer error'));
-        sb.addEventListener('error', fail, { once: true });
-        const go = () => {
-            sb.onupdateend = () => { sb.removeEventListener('error', fail); res(); };
-            sb.appendBuffer(buf);
-        };
-        sb.updating ? sb.addEventListener('updateend', go, { once: true }) : go();
+function appendQ(sb, buf){
+    return new Promise((res,rej)=>{
+        const fail=()=>rej(sb.error||new Error('SourceBuffer error'));
+        sb.addEventListener('error', fail, {once:true});
+        const go=()=>{sb.onupdateend=()=>{sb.removeEventListener('error',fail);res();};sb.appendBuffer(buf);};
+        sb.updating?sb.addEventListener('updateend',go,{once:true}):go();
     });
 }
 
-async function streamingPipeline(file, retryTranscode = false) {
-    const ms = new MediaSource();
-    const msUrl = URL.createObjectURL(ms);
-    els.video.src = msUrl;
-    await new Promise(r => ms.onsourceopen = r);
+async function streamingPipeline(file, retryTranscode=false){
+    const ms=new MediaSource();
+    const msUrl=URL.createObjectURL(ms);
+    els.video.src=msUrl;
+    await new Promise(r=>ms.onsourceopen=r);
 
-    let sb;
-    let copy = false;
-    let codecsStr = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+    let sb; let copy=false;
+    let codecsStr='video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
 
-    if (!retryTranscode) {
-        const sniffed = await sniffCodecs(file);
-        copy = sniffed.copy;
-        if (copy && sniffed.codecs) codecsStr = sniffed.codecs;
+    if(!retryTranscode){
+        const sniffed=await sniffCodecs(file);
+        copy=sniffed.copy;
+        if(copy&&sniffed.codecs) codecsStr=sniffed.codecs;
     }
+    const sbCodecs=copy?codecsStr:'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
 
-    const sbCodecs = copy ? codecsStr : 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
-
-    try {
-        sb = ms.addSourceBuffer(sbCodecs);
-    } catch (e) {
-        if (copy && !retryTranscode) {
-            diag('⚠️ Copy-путь не сработал (' + e.message + '), пробуем транскод...');
-            try { ms.endOfStream(); } catch {}
+    try{sb=ms.addSourceBuffer(sbCodecs);}
+    catch(e){
+        if(copy&&!retryTranscode){
+            diag('⚠️ Copy-путь не сработал ('+e.message+'), пробуем транскод...');
+            try{ms.endOfStream();}catch{}
             URL.revokeObjectURL(msUrl);
-            return streamingPipeline(file, true);
+            return streamingPipeline(file,true);
         }
         throw e;
     }
 
-    await state.ffmpeg.mount('WORKERFS', { files: [file] }, '/work');
-    const IN = '/work/' + file.name;
-    const ARGS = copy
-        ? ['-c', 'copy']
-        : ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-c:a', 'aac', '-b:a', '128k'];
-    const D = copy ? 60 : 10;
+    await state.ffmpeg.mount('WORKERFS',{files:[file]},'/work');
+    const IN='/work/'+file.name;
+    const ARGS=copy?['-c','copy']:['-c:v','libx264','-preset','ultrafast','-crf','23','-c:a','aac','-b:a','128k'];
+    const D=copy?60:10;
 
-    let started = false;
-    for (let T = 0; !state.cancelled; T += D) {
+    let started=false;
+    for(let T=0;!state.cancelled;T+=D){
         let segU8;
-        try {
-            await state.ffmpeg.exec([
-                '-ss', String(T), '-i', IN, '-t', String(D),
-                ...ARGS,
-                '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov', '/seg.mp4'
-            ]);
-            segU8 = new Uint8Array(await state.ffmpeg.readFile('/seg.mp4'));
+        try{
+            await state.ffmpeg.exec(['-ss',String(T),'-i',IN,'-t',String(D),...ARGS,'-f','mp4','-movflags','frag_keyframe+empty_moov','/seg.mp4']);
+            segU8=new Uint8Array(await state.ffmpeg.readFile('/seg.mp4'));
             await state.ffmpeg.deleteFile('/seg.mp4');
-        } catch (e) {
-            diag('ℹ️ Конец файла или ошибка чанка: ' + (e.message || e));
-            break;
-        }
-        if (!segU8 || segU8.length < 200) break;
+        }catch(e){diag('ℹ️ Конец файла или ошибка чанка: '+(e.message||e));break;}
+        if(!segU8||segU8.length<200) break;
 
-        const { init, seg } = splitInitAndSeg(segU8);
-        if (!started) {
-            await appendQ(sb, init);
-            started = true;
-        }
-        if (!copy) sb.timestampOffset = T;
-        if (seg.length) await appendQ(sb, seg);
-        if (els.video.paused) els.video.play().catch(() => {});
-        updateProgress(0, `Обработано ~${T + D} с`);
-        setStatus('transcoding', `🔄 Обработано ~${T + D} с`);
+        const {init,seg}=splitInitAndSeg(segU8);
+        if(!started){await appendQ(sb,init);started=true;}
+        if(!copy) sb.timestampOffset=T;
+        if(seg.length) await appendQ(sb,seg);
+        if(els.video.paused) els.video.play().catch(()=>{});
+        updateProgress(0,`Обработано ~${T+D} с`);
+        setStatus('transcoding',`🔄 Обработано ~${T+D} с`);
     }
-
-    if (started) {
-        try { ms.endOfStream(); } catch {}
-    }
-    await state.ffmpeg.unmount('/work').catch(() => {});
+    if(started){try{ms.endOfStream();}catch{}}
+    await state.ffmpeg.unmount('/work').catch(()=>{});
     return started;
 }
 
@@ -381,6 +349,5 @@ if("serviceWorker"in navigator){navigator.serviceWorker.register("./sw.js").catc
 setupEvents();
 setStatus("ready","✅ Готов. Загрузите видео — пробуем HTML5, при ошибке → FFmpeg.");
 
-// Eager load FFmpeg в фоне
-state.ffmpegLoading = true;
-initFfmpeg().then(() => { state.ffmpegLoading = false; });
+state.ffmpegLoading=true;
+initFfmpeg().then(()=>{state.ffmpegLoading=false;});
