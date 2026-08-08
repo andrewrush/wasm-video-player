@@ -1,5 +1,5 @@
 const $=(sel)=>document.querySelector(sel);
-const state={ffmpeg:null,ffmpegReady:false,currentFile:null,currentFileName:"",currentFileData:null,isTranscoded:false,transcodedBlobUrl:null,webglFilter:null,webglEnabled:false,cancelled:false,streaming:false,html5Failed:false,inFallback:false,preferredMode:'auto',streamingThresholdMB:64};
+const state={ffmpeg:null,ffmpegReady:false,currentFile:null,currentFileName:"",currentFileData:null,isTranscoded:false,transcodedBlobUrl:null,webglFilter:null,webglEnabled:false,cancelled:false,streaming:false,html5Failed:false,fallbackInProgress:false,preferredMode:'auto',streamingThresholdMB:64};
 const els={status:$("#status-bar"),diagPanel:$("#diag-panel"),diagContent:$("#diag-content"),dropZone:$("#drop-zone"),fileInput:$("#file-input"),video:$("#video-player"),canvas:$("#gl-canvas"),placeholder:$("#placeholder"),decoderError:$("#decoder-error"),decoderMsg:$("#decoder-msg"),btnTryFfmpeg:$("#btn-try-ffmpeg"),statsPanel:$("#stats-panel"),statsGrid:$("#stats-grid"),ffmpegPanel:$("#ffmpeg-panel"),btnTranscode:$("#btn-transcode"),btnThumbs:$("#btn-thumbs"),btnGif:$("#btn-gif"),btnInfo:$("#btn-info"),btnStop:$("#btn-stop"),progress:$("#progress"),progressFill:$("#progress-fill"),progressText:$("#progress-text"),logOutput:$("#log-output"),resultPanel:$("#result-panel"),resultContent:$("#result-content"),thumbsPanel:$("#thumbs-panel"),thumbsGrid:$("#thumbs-grid"),webglPanel:$("#webgl-panel"),webglToggle:$("#webgl-toggle"),filterGrid:$("#filter-grid"),playerStage:$("#player-stage"),modeSelect:$("#mode-select"),thresholdInput:$("#threshold-input")};
 
 function setStatus(cls,text){els.status.className="status "+cls;els.status.textContent=text;console.log("[Status]",text);}
@@ -43,7 +43,7 @@ els.video.addEventListener('loadeddata', () => { hideDecoderError(); state.html5
 }
 
 function onVideoError(e){
-    if(state.inFallback){console.log("[onVideoError] ignored — inFallback");return;}
+    if(state.fallbackInProgress){console.log("[onVideoError] ignored — fallbackInProgress");return;}
     const err = els.video.error;
     if (!err) return;
     const msgs = {1:"Прервано загрузкой",2:"Ошибка сети",3:"Ошибка декодирования",4:"Формат не поддерживается"};
@@ -149,8 +149,10 @@ enableButtons(state.ffmpegReady);
 
 // ========== FALLBACK ==========
 async function tryFfmpegFallback(){
+    if(state.fallbackInProgress){diag("⚠️ Fallback уже выполняется");return;}
+    state.fallbackInProgress = true;
     diag("=== tryFfmpegFallback START ===");
-    if(!state.currentFile){diag("❌ Нет currentFile");return;}
+    if(!state.currentFile){diag("❌ Нет currentFile");state.fallbackInProgress=false;return;}
 
     // Ждём FFmpeg
     if(!state.ffmpegReady){
@@ -166,10 +168,8 @@ async function tryFfmpegFallback(){
 
     // СБРОСИТЬ старый broken src перед транскодом
     diag("Сброс video.src...");
-    state.inFallback = true;
     els.video.src = "";
     els.video.load();
-    state.inFallback = false;
     diag("Сброс video.src завершён");
 
     await loadFileToFfmpeg();
@@ -202,6 +202,12 @@ async function tryFfmpegFallback(){
         await legacyFullTranscode(state.currentFile);
     }
     diag("=== tryFfmpegFallback END ===");
+} catch(e) {
+    diag("❌ tryFfmpegFallback exception: " + e.message);
+    setStatus("error","❌ Ошибка fallback: "+e.message);
+} finally {
+    state.fallbackInProgress = false;
+}
 }
 
 // ========== CODEC SNIFFER ==========
@@ -266,9 +272,7 @@ async function streamingPipeline(file, retryTranscode=false){
     diag("=== streamingPipeline START ===");
     const ms=new MediaSource();
     const msUrl=URL.createObjectURL(ms);
-    state.inFallback = true;
     els.video.src=msUrl;
-    state.inFallback = false;
     await new Promise(r=>ms.onsourceopen=r);
 
     let sb; let copy=false;
@@ -338,9 +342,7 @@ async function legacyFullTranscode(file){
         state.transcodedBlobUrl=URL.createObjectURL(blob);
         diag("Blob создан, URL="+state.transcodedBlobUrl);
         setPlayerMode('video');
-        state.inFallback = true;
         els.video.src=state.transcodedBlobUrl;
-        state.inFallback = false;
         state.isTranscoded=true;
         els.video.play().catch(e=>console.log('Autoplay blocked:',e));
         showStats({"Имя файла":file.name,"Размер оригинала":formatBytes(file.size),"Размер после транскода":formatBytes(blob.size),"Режим":"FFmpeg WASM legacy транскод → H.264/AAC"});
