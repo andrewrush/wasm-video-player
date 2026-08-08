@@ -1,30 +1,32 @@
 # 🎬 WASM Video Player
 
-Универсальный видеоплеер в браузере с FFmpeg WASM.
+Универсальный видеоплеер в браузере с FFmpeg WASM + WebGL фильтры.
 
-## Быстрый старт
+## Что нового в этой версии
+
+- **Lazy Loading FFmpeg** — 32MB WASM не грузится сразу, только по кнопке/требованию
+- **Прогресс загрузки с МБ** — видно сколько скачано из 32MB
+- **WebGL Post-Processing** — 7 фильтров: Ч/Б, сепия, инверт, винтаж, контуры, пиксели, блюр
+- **Service Worker** — кеширование статики и WASM
+- **Fallback** — HTML5 Video работает всегда для MP4
+
+## Быстрый старт (Termux)
 
 ```bash
 cd ~
 mkdir -p wasm-video-player && cd wasm-video-player
 unzip -o ~/downloads/wasm-video-player.zip -d .
 
-# Скачать FFmpeg WASM файлы (~30MB)
+# Скачать FFmpeg WASM (~32MB)
 bash download-ffmpeg.sh
-
-# Или вручную:
-# mkdir -p js/ffmpeg
-# curl -L -o js/ffmpeg/ffmpeg.js https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js
-# curl -L -o js/ffmpeg/ffmpeg-core.js https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js
-# curl -L -o js/ffmpeg/ffmpeg-core.wasm https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm
 
 git init
 git branch -M main
 git add .
-git commit -m "init: wasm video player"
+git commit -m "init: wasm video player v2"
 gh repo create andrewrush/wasm-video-player --public --source=. --push
 
-# Включить Pages (если ещё не включено)
+# Включить Pages
 gh api repos/andrewrush/wasm-video-player/pages -X POST -F "build_type=workflow"
 ```
 
@@ -34,12 +36,13 @@ gh api repos/andrewrush/wasm-video-player/pages -X POST -F "build_type=workflow"
 cd ~/wasm-video-player
 unzip -o ~/downloads/wasm-video-player.zip -d .
 git add .
-git commit -m "update: unpack archive"
+git commit -m "update: unpack archive v2"
 git push
 ```
 
 ## Архитектура
 
-- HTML5 Video для MP4/H.264
-- FFmpeg WASM (self-hosted) для MKV/HEVC/AVI/MOV
-- Автотранскодирование при загрузке неподдерживаемого формата
+- HTML5 Video для MP4/H.264 (мгновенно)
+- FFmpeg WASM (lazy-load) для MKV/HEVC/AVI/MOV
+- WebGL Canvas для пост-обработки видео
+- Service Worker для кеширования

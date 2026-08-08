@@ -1,7 +1,20 @@
-_site/
-dist/
+# Build artifacts
+*.o
+*_app
+*.tmp
+*.o
 *.log
+*.exe
+build/
+
+# Trace outputs
+trace.json
+*.log
+
+# OS
 .DS_Store
 Thumbs.db
+
+# IDE
 .vscode/
 .idea/
