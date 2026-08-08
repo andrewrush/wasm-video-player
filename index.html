@@ -34,7 +34,7 @@
             <input type="file" id="file-input" accept="video/*" hidden>
         </div>
 
-        <div class="player-wrapper">
+        <div id="player-stage" class="player-wrapper" data-mode="placeholder">
             <video id="video-player" controls preload="metadata"></video>
             <canvas id="gl-canvas"></canvas>
             <div id="placeholder" class="placeholder">
@@ -79,6 +79,7 @@
                 <button id="btn-thumbs" disabled>🖼 Скриншоты</button>
                 <button id="btn-gif" disabled>🎞 GIF</button>
                 <button id="btn-info" disabled>📋 Инфо</button>
+                <button id="btn-stop" disabled>⏹ Стоп</button>
             </div>
             <div id="progress" class="progress" style="display:none;">
                 <div class="progress-bar"><div id="progress-fill"></div></div>

@@ -1,48 +1,71 @@
-# 🎬 WASM Video Player
+# WASM Video Player
 
-Универсальный видеоплеер в браузере с FFmpeg WASM + WebGL фильтры.
+Универсальный браузерный видеоплеер на FFmpeg WASM. Поддерживает MKV, HEVC, AVI, MOV, WebM, MP4 и другие форматы через транскодирование прямо в браузере.
 
-## Что нового в этой версии
+🌐 **Живой сайт:** [https://andrewrush.github.io/wasm-video-player/](https://andrewrush.github.io/wasm-video-player/)
 
-- **Lazy Loading FFmpeg** — 32MB WASM не грузится сразу, только по кнопке/требованию
-- **Прогресс загрузки с МБ** — видно сколько скачано из 32MB
-- **WebGL Post-Processing** — 7 фильтров: Ч/Б, сепия, инверт, винтаж, контуры, пиксели, блюр
-- **Service Worker** — кеширование статики и WASM
-- **Fallback** — HTML5 Video работает всегда для MP4
+## Возможности
 
-## Быстрый старт (Termux)
+- 🎬 **Воспроизведение** любых видеоформатов через FFmpeg WASM
+- 🔄 **Транскодирование** в H.264/AAC для нативного воспроизведения
+- 🖼 **Скриншоты** — извлечение кадров из видео
+- 🎞 **GIF** — создание анимированных превью
+- 📋 **Информация** о кодеках, разрешении, битрейте
+- 🎨 **WebGL-фильтры** — Ч/Б, сепия, инверт, винтаж, контуры, пиксели, блюр
+- 📱 **PWA** — работает офлайн через Service Worker
 
-```bash
-cd ~
-mkdir -p wasm-video-player && cd wasm-video-player
-unzip -o ~/downloads/wasm-video-player.zip -d .
+## Streaming Pipeline (v14)
 
-# Скачать FFmpeg WASM (~32MB)
-bash download-ffmpeg.sh
+Для больших файлов (> 64 МБ) используется чанкованный потоковый пайплайн:
 
-git init
-git branch -M main
-git add .
-git commit -m "init: wasm video player v2"
-gh repo create andrewrush/wasm-video-player --public --source=. --push
+- **Вход:** файл монтируется через WORKERFS (pread с диска, без копирования в heap)
+- **Обработка:** файл нарезается на чанки, каждый чанк обрабатывается отдельным `exec`
+- **Выход:** фрагментированный MP4 (frag_keyframe+empty_moov) подаётся в MediaSource Extensions (MSE)
+- **Copy-путь:** если вход уже H.264/AAC — remux без перекодирования (чанки 60 с)
+- **Транскод-путь:** для остальных форматов — libx264/aac (чанки 10 с)
+- **Fallback:** при любой ошибке пайплайна или для файлов < 64 МБ — legacy полный транскод
 
-# Включить Pages
-gh api repos/andrewrush/wasm-video-player/pages -X POST -F "build_type=workflow"
-```
+### Ограничения v14
 
-## Обновление из архива
-
-```bash
-cd ~/wasm-video-player
-unzip -o ~/downloads/wasm-video-player.zip -d .
-git add .
-git commit -m "update: unpack archive v2"
-git push
-```
+- Транскод медленнее realtime (однопоточный WASM без SharedArrayBuffer)
+- Прерывание обработки происходит между чанками (exec нельзя прервать на лету)
+- Старые Safari могут не поддерживать MSE для fmp4
+- GitHub Pages не даёт заголовки COOP/COEP → только однопоточное ядро
 
 ## Архитектура
 
-- HTML5 Video для MP4/H.264 (мгновенно)
-- FFmpeg WASM (lazy-load) для MKV/HEVC/AVI/MOV
-- WebGL Canvas для пост-обработки видео
-- Service Worker для кеширования
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Локальный  │────▶│  WORKERFS   │────▶│  FFmpeg     │
+│    File     │     │  (pread)    │     │  WASM       │
+└─────────────┘     └─────────────┘     └──────┬──────┘
+                                               │
+                    ┌─────────────┐            │
+                    │  MediaSource│◀───────────┘
+                    │  Extensions │    frag mp4
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │  <video>    │
+                    └─────────────┘
+```
+
+## Стек
+
+- `@ffmpeg/ffmpeg` 0.12.x (UMD, самохостинг)
+- Emscripten однопоточное ядро (без SharedArrayBuffer)
+- MediaSource Extensions (MSE)
+- WebGL 2.0 для фильтров
+- Service Worker для офлайн-кеша
+
+## Локальная разработка (Termux)
+
+```bash
+cd ~/wasm-video-player
+python3 -m http.server 8080
+# Открыть http://127.0.0.1:8080
+```
+
+## Лицензия
+
+MIT
