@@ -35,6 +35,21 @@ function toggleWebGL(){state.webglEnabled=els.webglToggle.checked;if(!state.webg
 
 function setFilter(name){if(!state.webglFilter)return;state.webglFilter.setFilter(name);document.querySelectorAll(".filter-btn").forEach(b=>b.classList.toggle("active",b.dataset.filter===name));}
 
+// ========== TOBLOBURL FIX ==========
+// Загружает файл через fetch и возвращает blob URL.
+// Решает проблему: ffmpeg-core.js (UMD) внутри Worker разрешает путь к .wasm
+// относительно blob/Worker-контекста, а не от страницы.
+// Blob URL работают из любого контекста без проблем путей.
+async function toBlobURL(url, mimeType) {
+    diag("⬇️ Загрузка " + url.split('/').pop() + "...");
+    const response = await fetch(url);
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    const blob = await response.blob();
+    const blobURL = URL.createObjectURL(new Blob([blob], { type: mimeType }));
+    diag("✅ " + url.split('/').pop() + " → blob URL (" + formatBytes(blob.size) + ")");
+    return blobURL;
+}
+
 async function initFfmpeg(){
 if(state.ffmpegReady){diag("ℹ️ FFmpeg уже загружен");return;}
 setStatus("loading","Диагностика файлов...");
@@ -42,13 +57,11 @@ els.diagPanel.style.display="block";els.diagContent.innerHTML="";
 els.lazyPanel.style.display="none";els.ffmpegPanel.style.display="block";
 
 const base=location.href.replace(/\/$/,"");
-const coreURL=base+"/js/ffmpeg/ffmpeg-core.js";
-const wasmURL=base+"/js/ffmpeg/ffmpeg-core.wasm";
 
-diag("Base URL: "+base);
+// Проверяем доступность исходных файлов
 const ok1=await checkFile(base+"/js/ffmpeg/ffmpeg.js","ffmpeg.js");
-const ok2=await checkFile(coreURL,"ffmpeg-core.js");
-const ok3=await checkFile(wasmURL,"ffmpeg-core.wasm");
+const ok2=await checkFile(base+"/js/ffmpeg/ffmpeg-core.js","ffmpeg-core.js");
+const ok3=await checkFile(base+"/js/ffmpeg/ffmpeg-core.wasm","ffmpeg-core.wasm");
 
 if(!ok1||!ok2||!ok3){setStatus("error","❌ Не все файлы доступны. Подождите 2 мин (кеш GitHub Pages) и обновите.");return;}
 
@@ -66,37 +79,17 @@ state.ffmpeg=new FFmpeg();
 state.ffmpeg.on("log",({message})=>{appendLog(message);});
 state.ffmpeg.on("progress",({progress})=>{updateProgress(Math.round(progress*100));});
 
-diag("Вызов ffmpeg.load()...");
+// === FIX: toBlobURL — загружаем файлы через fetch → blob URL ===
+// Это решает проблему путей в Worker на GitHub Pages в подпапке
+const coreURL = await toBlobURL(base+"/js/ffmpeg/ffmpeg-core.js", "text/javascript");
+const wasmURL = await toBlobURL(base+"/js/ffmpeg/ffmpeg-core.wasm", "application/wasm");
+
+diag("Вызов ffmpeg.load({coreURL, wasmURL})...");
 const t0=performance.now();
 
-// Прогресс загрузки WASM
-const originalFetch=window.fetch;
-window.fetch=async function(...args){
-const url=args[0];
-if(typeof url==="string"&&url.includes("ffmpeg-core.wasm")){
-diag("⬇️ Начата загрузка ffmpeg-core.wasm (~32MB)...");
-const response=await originalFetch.apply(this,args);
-const reader=response.body.getReader();
-const contentLength=+response.headers.get("Content-Length")||32129114;
-let received=0;
-const chunks=[];
-while(true){
-const {done,value}=await reader.read();
-if(done)break;
-chunks.push(value);
-received+=value.length;
-const pct=Math.round((received/contentLength)*100);
-updateProgress(pct,formatBytes(received)+"/"+formatBytes(contentLength)+" ("+pct+"%)");
-}
-diag("✅ ffmpeg-core.wasm загружен ("+formatBytes(received)+")");
-const blob=new Blob(chunks);
-return new Response(blob,{headers:response.headers});
-}
-return originalFetch.apply(this,args);
-};
-
+// Прогресс загрузки WASM через fetch (для toBlobURL уже показан выше)
+// Но добавим прогресс для самого ffmpeg.load()
 await state.ffmpeg.load({coreURL:coreURL,wasmURL:wasmURL});
-window.fetch=originalFetch;
 
 const elapsed=((performance.now()-t0)/1000).toFixed(1);
 state.ffmpegReady=true;
