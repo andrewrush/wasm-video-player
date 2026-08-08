@@ -1,5 +1,5 @@
 // Service Worker for WASM Video Player
-const CACHE_NAME = 'wasm-video-player-v3';
+const CACHE_NAME = 'wasm-video-player-v4';
 const FILES_TO_CACHE = [
     './',
     './index.html',

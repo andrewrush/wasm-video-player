@@ -2,7 +2,6 @@
 <html lang="ru">
 <head>
     <script>
-      // Принудительно unregister старый SW (v1/v2) чтобы избежать кеша
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations().then(regs => {
           regs.forEach(r => r.unregister());
