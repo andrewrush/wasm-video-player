@@ -83,7 +83,7 @@ header h1 { font-size: 1.9rem; margin-bottom: 6px; }
   margin-top: 8px;
 }
 
-/* ===== Player Stage (v14: single source of truth via data-mode) ===== */
+/* ===== Player Stage ===== */
 .player-wrapper {
   background: #000;
   border-radius: 12px;
@@ -104,7 +104,6 @@ header h1 { font-size: 1.9rem; margin-bottom: 6px; }
   display: none;
 }
 
-/* placeholder visible by default */
 .player-wrapper .placeholder {
   display: block;
   color: var(--text-muted);
@@ -129,7 +128,7 @@ header h1 { font-size: 1.9rem; margin-bottom: 6px; }
   display: none;
 }
 
-/* placeholder mode (explicit) */
+/* placeholder mode */
 .player-wrapper[data-mode="placeholder"] video,
 .player-wrapper[data-mode="placeholder"] canvas {
   display: none;
@@ -139,6 +138,52 @@ header h1 { font-size: 1.9rem; margin-bottom: 6px; }
 }
 
 .placeholder .hint { font-size: 0.85rem; margin-top: 6px; }
+
+/* ===== Decoder Error Overlay ===== */
+.decoder-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.92);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  z-index: 10;
+  text-align: center;
+  padding: 20px;
+}
+
+.decoder-overlay .decoder-icon {
+  font-size: 2.5rem;
+}
+
+.decoder-overlay h3 {
+  color: var(--text);
+  font-size: 1.2rem;
+}
+
+.decoder-overlay p {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.decoder-btn {
+  margin-top: 8px;
+  padding: 12px 28px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.decoder-btn:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
 
 .panel {
   background: var(--surface);
@@ -217,7 +262,6 @@ header h1 { font-size: 1.9rem; margin-bottom: 6px; }
   color: var(--accent);
 }
 
-/* Stop button style */
 #btn-stop {
   border-color: var(--danger);
   color: var(--danger);
@@ -373,22 +417,6 @@ footer a:hover { text-decoration: underline; }
   gap: 16px;
   flex-wrap: wrap;
   margin-top: 8px;
-}
-
-/* ===== Lazy Load Panel ===== */
-.ffmpeg-lazy {
-  text-align: center;
-  padding: 20px;
-}
-
-.ffmpeg-lazy p {
-  color: var(--text-muted);
-  margin-bottom: 12px;
-}
-
-.ffmpeg-lazy .size-hint {
-  font-size: 0.8rem;
-  color: var(--text-muted);
 }
 
 /* ===== Responsive ===== */

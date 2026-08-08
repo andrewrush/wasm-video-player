@@ -7,7 +7,9 @@ const FILES_TO_CACHE = [
     './js/app.js',
     './js/webgl-filters.js',
     './js/ffmpeg/ffmpeg.js',
-    './js/ffmpeg/814.ffmpeg.js'
+    './js/ffmpeg/814.ffmpeg.js',
+    './js/ffmpeg/ffmpeg-core.js',
+    './js/ffmpeg/ffmpeg-core.wasm'
 ];
 
 self.addEventListener('install', e => {

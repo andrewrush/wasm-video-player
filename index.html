@@ -40,6 +40,15 @@
             <div id="placeholder" class="placeholder">
                 <p>Нет загруженного видео</p>
             </div>
+            <!-- Overlay: ошибка декодера -->
+            <div id="decoder-error" class="decoder-overlay" style="display:none;">
+                <div class="decoder-icon">⚠️</div>
+                <h3>Playback Error</h3>
+                <p id="decoder-msg">Decoder closed unexpectedly</p>
+                <button id="btn-try-ffmpeg" class="decoder-btn">
+                    🔄 Попробовать FFmpeg
+                </button>
+            </div>
         </div>
 
         <div id="stats-panel" class="panel" style="display:none;">
@@ -61,14 +70,6 @@
                 <button class="filter-btn" data-filter="edge">Контуры</button>
                 <button class="filter-btn" data-filter="pixelate">Пиксели</button>
                 <button class="filter-btn" data-filter="blur">Блюр</button>
-            </div>
-        </div>
-
-        <div id="lazy-panel" class="panel" style="display:none;">
-            <div class="ffmpeg-lazy">
-                <p>⚡ Для этого файла требуется FFmpeg WASM (~32 MB)</p>
-                <button id="btn-load-ffmpeg" class="download-link">⬇ Загрузить FFmpeg WASM</button>
-                <p class="size-hint">Загрузка произойдёт один раз, затем кешируется</p>
             </div>
         </div>
 
