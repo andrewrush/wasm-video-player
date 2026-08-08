@@ -135,7 +135,7 @@ enableButtons(state.ffmpegReady);
 }
 
 async function autoTranscode(file){
-if(typeof MediaSource!=="undefined"){try{await streamTranscode(file);return;}catch(e){console.warn("Streaming failed:",e);diag("⚠️ Потоковое воспроизведение недоступно, fallback к полному транскоду");}}
+if(typeof MediaSource!=="undefined"){try{await streamTranscode(file);return;}catch(e){console.warn("Streaming failed:",e);diag("⚠️ Потоковое недоступно, полный транскод...");}}
 const input="input"+ext(file.name);const output="output_auto.mp4";updateProgress(0);
 try{
 await state.ffmpeg.exec(["-i",input,"-c:v","libx264","-preset","ultrafast","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart","-y",output]);
@@ -158,24 +158,25 @@ const mediaSource=new MediaSource();
 const url=URL.createObjectURL(mediaSource);
 els.video.src=url;els.video.classList.add('active');els.placeholder.style.display='none';els.canvas.classList.remove('active');
 return new Promise((resolve,reject)=>{
-let sourceBuffer=null;let queue=[];let lastSize=0;let interval=null;let ffmpegDone=false;
-function checkEnd(){if(ffmpegDone&&!sourceBuffer.updating&&queue.length===0){if(mediaSource.readyState==='open'){try{mediaSource.endOfStream();}catch(e){}}setStatus("ready","✅ Потоковое воспроизведение");resolve();}}
+let sourceBuffer=null;let queue=[];let lastSize=0;let checkInterval=null;let ffmpegDone=false;let hasData=false;
+function tryEnd(){if(ffmpegDone&&!sourceBuffer.updating&&queue.length===0){if(mediaSource.readyState==='open'){try{mediaSource.endOfStream();}catch(e){}}setStatus("ready","✅ Потоковое воспроизведение");resolve();}}
 mediaSource.addEventListener('sourceopen',async()=>{
 try{
 diag("MediaSource открыт");
 const codecs=['video/mp4; codecs="avc1.42E01E, mp4a.40.2"','video/mp4; codecs="avc1.4D401F, mp4a.40.2"','video/mp4; codecs="avc1.64001F, mp4a.40.2"'];
 let selectedCodec=null;
-for(const codec of codecs){if(MediaSource.isTypeSupported(codec)){selectedCodec=codec;diag("✅ Codec: "+codec);break;}else{diag("❌ Codec: "+codec);}}
-if(!selectedCodec)throw new Error("Нет поддерживаемых codec");
+for(const c of codecs){if(MediaSource.isTypeSupported(c)){selectedCodec=c;diag("Codec: "+c);break;}else{diag("Skip codec: "+c);}}
+if(!selectedCodec)throw new Error("Нет codec");
 sourceBuffer=mediaSource.addSourceBuffer(selectedCodec);
-sourceBuffer.addEventListener('updateend',()=>{if(queue.length>0&&!sourceBuffer.updating){sourceBuffer.appendBuffer(queue.shift());}checkEnd();});
-sourceBuffer.addEventListener('error',(e)=>{diag("❌ SourceBuffer error");console.error(e);});
-const ffmpegPromise=state.ffmpeg.exec(["-i",input,"-c:v","libx264","-preset","ultrafast","-crf","23","-profile:v","baseline","-level","3.0","-c:a","aac","-b:a","128k","-movflags","frag_keyframe+empty_moov+default_base_moof","-f","mp4",output]).then(()=>{ffmpegDone=true;diag("✅ FFmpeg завершил");checkEnd();}).catch(err=>{diag("❌ FFmpeg error: "+err.message);reject(err);});
-diag("Ожидание init segment (2с)...");await new Promise(r=>setTimeout(r,2000));
-interval=setInterval(async()=>{try{const data=await state.ffmpeg.readFile(output);if(data.length>lastSize){const chunk=data.slice(lastSize);lastSize=data.length;if(!sourceBuffer.updating&&queue.length===0){sourceBuffer.appendBuffer(chunk);}else{queue.push(chunk);}if(!ffmpegDone){updateProgress(Math.min(95,Math.round((lastSize/file.size)*100)));}}else if(ffmpegDone){clearInterval(interval);checkEnd();}}catch(e){if(ffmpegDone){clearInterval(interval);checkEnd();}}},400);
+sourceBuffer.addEventListener('updateend',()=>{if(queue.length>0&&!sourceBuffer.updating){try{sourceBuffer.appendBuffer(queue.shift());}catch(e){queue=[];}}tryEnd();});
+sourceBuffer.addEventListener('error',(e)=>{diag("SourceBuffer error");});
+state.ffmpeg.exec(["-i",input,"-c:v","libx264","-preset","ultrafast","-crf","23","-c:a","aac","-b:a","128k","-movflags","frag_keyframe+empty_moov+default_base_moof","-y",output]).then(()=>{ffmpegDone=true;diag("FFmpeg done");tryEnd();}).catch(err=>{ffmpegDone=true;diag("FFmpeg err: "+err.message);tryEnd();});
+await new Promise(r=>setTimeout(r,2500));
+checkInterval=setInterval(async()=>{
+try{const data=await state.ffmpeg.readFile(output);if(data.length>lastSize){const chunk=data.slice(lastSize);lastSize=data.length;hasData=true;if(!sourceBuffer.updating&&queue.length===0){try{sourceBuffer.appendBuffer(chunk);}catch(e){queue.push(chunk);}}else{queue.push(chunk);}updateProgress(Math.min(95,Math.round((lastSize/Math.max(file.size,1))*100)));}else if(ffmpegDone&&hasData){clearInterval(checkInterval);tryEnd();}else if(ffmpegDone&&!hasData){clearInterval(checkInterval);reject(new Error("No output"));}}catch(e){if(ffmpegDone){clearInterval(checkInterval);if(hasData)tryEnd();else reject(e);}}},600);
 }catch(err){reject(err);}
 });
-mediaSource.addEventListener('error',(e)=>{diag("❌ MediaSource error");console.error(e);reject(new Error("MediaSource error"));});
+mediaSource.addEventListener('error',(e)=>{diag("MediaSource error");reject(new Error("MediaSource error"));});
 });
 }
 
