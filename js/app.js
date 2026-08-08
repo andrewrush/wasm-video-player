@@ -31,13 +31,13 @@ els.btnInfo.addEventListener("click",getFfmpegInfo);
 els.btnTryFfmpeg.addEventListener("click",tryFfmpegFallback);
 els.btnStop.addEventListener("click",stopStreaming);
 els.webglToggle.addEventListener("change",toggleWebGL);
-
-// Settings
-els.modeSelect.addEventListener("change",e=>{state.preferredMode=e.target.value;diag("Режим: "+state.preferredMode);});
-els.thresholdInput.addEventListener("change",e=>{state.streamingThresholdMB=parseInt(e.target.value)||64;diag("Порог стриминга: "+state.streamingThresholdMB+" МБ");});
-
+if(els.modeSelect){
+    els.modeSelect.addEventListener("change",e=>{state.preferredMode=e.target.value;diag("Режим: "+state.preferredMode);});
+}
+if(els.thresholdInput){
+    els.thresholdInput.addEventListener("change",e=>{state.streamingThresholdMB=parseInt(e.target.value)||64;diag("Порог стриминга: "+state.streamingThresholdMB+" МБ");});
+}
 document.querySelectorAll(".filter-btn").forEach(b=>b.addEventListener("click",()=>setFilter(b.dataset.filter)));
-
 els.video.addEventListener('error', onVideoError);
 els.video.addEventListener('loadeddata', () => { hideDecoderError(); state.html5Failed = false; });
 }
@@ -148,35 +148,36 @@ enableButtons(state.ffmpegReady);
 
 // ========== FALLBACK ==========
 async function tryFfmpegFallback(){
-    if(!state.currentFile) return;
+    diag("=== tryFfmpegFallback START ===");
+    if(!state.currentFile){diag("❌ Нет currentFile");return;}
 
-    // Ждём FFmpeg если ещё грузится
+    // Ждём FFmpeg
     if(!state.ffmpegReady){
-        setStatus("loading","⏳ Загрузка FFmpeg WASM...");
+        diag("⏳ Ожидание FFmpeg...");
         els.decoderMsg.textContent = "Загрузка FFmpeg WASM, подождите...";
-        for(let i=0; i<120 && !state.ffmpegReady; i++){
-            await new Promise(r => setTimeout(r, 500));
-        }
-        if(!state.ffmpegReady){
-            diag("❌ FFmpeg не загрузился за 60 секунд");
-            setStatus("error","❌ FFmpeg недоступен");
-            els.decoderMsg.textContent = "FFmpeg не загрузился. Проверьте соединение.";
-            return;
-        }
+        for(let i=0;i<120 && !state.ffmpegReady;i++){await new Promise(r=>setTimeout(r,500));}
+        if(!state.ffmpegReady){diag("❌ FFmpeg не загрузился");els.decoderMsg.textContent="FFmpeg не загрузился. Проверьте соединение.";return;}
     }
+    diag("✅ FFmpeg готов");
 
     hideDecoderError();
     setPlayerMode('video');
+
+    // СБРОСИТЬ старый broken src перед транскодом
+    diag("Сброс video.src...");
+    els.video.src = "";
+    els.video.load();
+
     await loadFileToFfmpeg();
 
     const thresholdBytes = state.streamingThresholdMB * 1024 * 1024;
     const useStreaming = state.preferredMode === 'streaming' ||
         (state.preferredMode === 'auto' && state.currentFile.size >= thresholdBytes);
 
-    diag(`Режим: ${state.preferredMode}, файл ${formatBytes(state.currentFile.size)}, порог ${state.streamingThresholdMB} МБ → ${useStreaming ? 'стриминг' : 'legacy'}`);
+    diag("Режим="+state.preferredMode+", размер="+formatBytes(state.currentFile.size)+", порог="+state.streamingThresholdMB+"MB → "+(useStreaming?"стриминг":"legacy"));
 
     if(useStreaming){
-        setStatus("transcoding","🔄 Потоковая обработка (streaming)...");
+        setStatus("transcoding","🔄 Потоковая обработка...");
         els.btnStop.disabled = false;
         state.cancelled = false; state.streaming = true;
         try{
@@ -196,6 +197,7 @@ async function tryFfmpegFallback(){
         setStatus("transcoding","🔄 Транскодирование (legacy)...");
         await legacyFullTranscode(state.currentFile);
     }
+    diag("=== tryFfmpegFallback END ===");
 }
 
 // ========== CODEC SNIFFER ==========
@@ -257,6 +259,7 @@ function appendQ(sb, buf){
 }
 
 async function streamingPipeline(file, retryTranscode=false){
+    diag("=== streamingPipeline START ===");
     const ms=new MediaSource();
     const msUrl=URL.createObjectURL(ms);
     els.video.src=msUrl;
@@ -308,26 +311,40 @@ async function streamingPipeline(file, retryTranscode=false){
     }
     if(started){try{ms.endOfStream();}catch{}}
     await state.ffmpeg.unmount('/work').catch(()=>{});
+    diag("=== streamingPipeline END, started="+started+" ===");
     return started;
 }
 
 async function legacyFullTranscode(file){
-if(!file)return;
-const input="input"+ext(file.name);
-const output="output_legacy.mp4";
-updateProgress(0);
-try{
-await state.ffmpeg.exec(["-i",input,"-c:v","libx264","-preset","ultrafast","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart","-y",output]);
-const data=await state.ffmpeg.readFile(output);
-const blob=new Blob([data.buffer],{type:"video/mp4"});
-state.transcodedBlobUrl=URL.createObjectURL(blob);
-setPlayerMode('video');
-els.video.src=state.transcodedBlobUrl;state.isTranscoded=true;
-els.video.play().catch(e=>console.log('Autoplay blocked:',e));
-showStats({"Имя файла":file.name,"Размер оригинала":formatBytes(file.size),"Размер после транскода":formatBytes(blob.size),"Режим":"FFmpeg WASM legacy транскод → H.264/AAC"});
-setStatus("ready","✅ Транскодировано и воспроизводится");
-if(state.webglEnabled&&state.webglFilter){state.webglFilter.setVideo(els.video);state.webglFilter.start();}
-}catch(e){appendLog("Ошибка legacy транскода: "+e.message);setStatus("error","❌ Ошибка транскодирования");}finally{resetProgress();}
+    diag("=== legacyFullTranscode START ===");
+    if(!file){diag("❌ Нет файла");return;}
+    const input="input"+ext(file.name);
+    const output="output_legacy.mp4";
+    diag("input="+input+", output="+output);
+    updateProgress(0);
+    try{
+        diag("Запуск ffmpeg.exec...");
+        await state.ffmpeg.exec(["-i",input,"-c:v","libx264","-preset","ultrafast","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart","-y",output]);
+        diag("exec завершён, читаем output...");
+        const data=await state.ffmpeg.readFile(output);
+        diag("readFile OK, размер="+formatBytes(data.length));
+        const blob=new Blob([data.buffer],{type:"video/mp4"});
+        state.transcodedBlobUrl=URL.createObjectURL(blob);
+        diag("Blob создан, URL="+state.transcodedBlobUrl);
+        setPlayerMode('video');
+        els.video.src=state.transcodedBlobUrl;
+        state.isTranscoded=true;
+        els.video.play().catch(e=>console.log('Autoplay blocked:',e));
+        showStats({"Имя файла":file.name,"Размер оригинала":formatBytes(file.size),"Размер после транскода":formatBytes(blob.size),"Режим":"FFmpeg WASM legacy транскод → H.264/AAC"});
+        setStatus("ready","✅ Транскодировано и воспроизводится");
+        if(state.webglEnabled&&state.webglFilter){state.webglFilter.setVideo(els.video);state.webglFilter.start();}
+        diag("=== legacyFullTranscode SUCCESS ===");
+    }catch(e){
+        diag("❌ Ошибка legacy транскода: "+e.message);
+        appendLog("Ошибка legacy транскода: "+e.message);
+        setStatus("error","❌ Ошибка транскодирования: "+e.message);
+        diag("=== legacyFullTranscode FAILED ===");
+    }finally{resetProgress();}
 }
 
 async function transcodeToMp4(){if(!state.ffmpegReady||!state.currentFile)return;const input="input"+ext(state.currentFileName);const output="output_manual.mp4";setStatus("transcoding","🔄 Конвертация в MP4...");updateProgress(0);els.resultPanel.style.display="none";try{await state.ffmpeg.exec(["-i",input,"-c:v","libx264","-preset","fast","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart","-y",output]);const data=await state.ffmpeg.readFile(output);const blob=new Blob([data.buffer],{type:"video/mp4"});const url=URL.createObjectURL(blob);setPlayerMode('video');els.video.src=url;state.transcodedBlobUrl=url;state.isTranscoded=true;els.video.play().catch(e=>console.log('Autoplay blocked:',e));showResult(data,"video/mp4","transcoded.mp4");setStatus("ready","✅ Конвертация завершена");if(state.webglEnabled&&state.webglFilter){state.webglFilter.setVideo(els.video);state.webglFilter.start();}}catch(e){appendLog("Ошибка: "+e.message);setStatus("error","❌ Ошибка конвертации");}finally{resetProgress();}}
