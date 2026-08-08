@@ -5,25 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WASM Video Player — MKV/HEVC/AVI в браузере</title>
     <link rel="stylesheet" href="css/style.css">
-    <!-- FFmpeg WASM single-thread CDN -->
-    <script src="js/ffmpeg/ffmpeg.js"></script>
+    <!-- Self-hosted FFmpeg WASM -->
+    <script src="./js/ffmpeg/ffmpeg.js"></script>
 </head>
 <body>
     <div class="container">
         <header>
             <h1>🎬 WASM Video Player</h1>
             <p class="subtitle">MKV · HEVC · AVI · MOV · WebM · MP4 — всё в браузере</p>
-            <div id="status-bar" class="status loading">Инициализация FFmpeg WASM...</div>
+            <div id="status-bar" class="status loading">Инициализация...</div>
         </header>
 
-        <!-- Зона drag & drop -->
         <div id="drop-zone" class="drop-zone">
             <p>📁 Перетащите видео сюда или <span class="link">выберите файл</span></p>
             <p class="hint">Поддерживаются: MP4, MKV, AVI, MOV, WebM, TS, FLV и другие</p>
             <input type="file" id="file-input" accept="video/*" hidden>
         </div>
 
-        <!-- Плеер -->
         <div class="player-wrapper">
             <video id="video-player" controls preload="metadata" style="display:none;"></video>
             <div id="placeholder" class="placeholder">
@@ -32,13 +30,11 @@
             </div>
         </div>
 
-        <!-- Nerd Stats панель -->
         <div id="stats-panel" class="panel" style="display:none;">
             <h3>📊 Nerd Stats</h3>
             <div class="stats-grid" id="stats-grid"></div>
         </div>
 
-        <!-- FFmpeg панель -->
         <div id="ffmpeg-panel" class="panel" style="display:none;">
             <h3>⚙️ FFmpeg WASM</h3>
             <div class="btn-group">
@@ -54,25 +50,22 @@
             <div id="log-output" class="log"></div>
         </div>
 
-        <!-- Результат -->
         <div id="result-panel" class="panel" style="display:none;">
             <h3>📤 Результат</h3>
             <div id="result-content"></div>
         </div>
 
-        <!-- Thumbnails -->
         <div id="thumbs-panel" class="panel" style="display:none;">
             <h3>🖼 Скриншоты</h3>
             <div id="thumbs-grid" class="thumbs-grid"></div>
         </div>
 
-        <!-- Footer -->
         <footer>
-            <p>Вдохновлено <a href="https://github.com/mrujjwalg/movi-player" target="_blank">movi-player</a> — Modern modular video player powered by WebCodecs + FFmpeg WASM</p>
-            <p>Окружение: GitHub Pages · Termux Android aarch64 · Single-thread FFmpeg WASM</p>
+            <p>Вдохновлено <a href="https://github.com/mrujjwalg/movi-player" target="_blank">movi-player</a></p>
+            <p>Окружение: GitHub Pages · Termux Android aarch64 · Self-hosted FFmpeg WASM</p>
         </footer>
     </div>
 
-    <script src="js/app.js"></script>
+    <script src="./js/app.js"></script>
 </body>
 </html>
