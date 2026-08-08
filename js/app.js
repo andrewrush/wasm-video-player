@@ -58,12 +58,13 @@ els.lazyPanel.style.display="none";els.ffmpegPanel.style.display="block";
 
 const base=location.href.replace(/\/$/,"");
 
-// Проверяем доступность исходных файлов
+// Проверяем доступность ВСЕХ файлов (включая worker)
 const ok1=await checkFile(base+"/js/ffmpeg/ffmpeg.js","ffmpeg.js");
 const ok2=await checkFile(base+"/js/ffmpeg/ffmpeg-core.js","ffmpeg-core.js");
 const ok3=await checkFile(base+"/js/ffmpeg/ffmpeg-core.wasm","ffmpeg-core.wasm");
+const ok4=await checkFile(base+"/js/ffmpeg/814.ffmpeg.js","814.ffmpeg.js (Worker)");
 
-if(!ok1||!ok2||!ok3){setStatus("error","❌ Не все файлы доступны. Подождите 2 мин (кеш GitHub Pages) и обновите.");return;}
+if(!ok1||!ok2||!ok3||!ok4){setStatus("error","❌ Не все файлы доступны. Подождите 2 мин (кеш GitHub Pages) и обновите.");return;}
 
 const wasmSupported=typeof WebAssembly==="object"&&typeof WebAssembly.instantiate==="function";
 if(!wasmSupported){diag("❌ WebAssembly не поддерживается");setStatus("fallback","⚡ HTML5 режим (WASM не поддерживается)");return;}
@@ -79,16 +80,15 @@ state.ffmpeg=new FFmpeg();
 state.ffmpeg.on("log",({message})=>{appendLog(message);});
 state.ffmpeg.on("progress",({progress})=>{updateProgress(Math.round(progress*100));});
 
-// === FIX: toBlobURL — загружаем файлы через fetch → blob URL ===
-// Это решает проблему путей в Worker на GitHub Pages в подпапке
+// === FIX: toBlobURL — загружаем core и wasm через fetch → blob URL ===
+// Worker (814.ffmpeg.js) загружается автоматически ffmpeg.js из той же папки.
+// Worker делает importScripts(coreURL), поэтому blob URL надёжнее для подпапок Pages.
 const coreURL = await toBlobURL(base+"/js/ffmpeg/ffmpeg-core.js", "text/javascript");
 const wasmURL = await toBlobURL(base+"/js/ffmpeg/ffmpeg-core.wasm", "application/wasm");
 
 diag("Вызов ffmpeg.load({coreURL, wasmURL})...");
 const t0=performance.now();
 
-// Прогресс загрузки WASM через fetch (для toBlobURL уже показан выше)
-// Но добавим прогресс для самого ffmpeg.load()
 await state.ffmpeg.load({coreURL:coreURL,wasmURL:wasmURL});
 
 const elapsed=((performance.now()-t0)/1000).toFixed(1);

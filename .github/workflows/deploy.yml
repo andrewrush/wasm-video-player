@@ -33,7 +33,6 @@ jobs:
           cp -r js _site/
           cp sw.js _site/
           cp README.md _site/
-          # ffmpeg-core.wasm уже в js/ffmpeg/ из репозитория
 
       - name: Deploy to GitHub Pages (gh-pages branch)
         uses: peaceiris/actions-gh-pages@v4
