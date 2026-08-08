@@ -1,14 +1,15 @@
 // Service Worker for WASM Video Player
 // Кэширует статические файлы для мгновенной загрузки при повторных визитах
 
-const CACHE_NAME = 'wasm-video-player-v1';
+const CACHE_NAME = 'wasm-video-player-v2';
 const FILES_TO_CACHE = [
     './',
     './index.html',
     './css/style.css',
     './js/app.js',
     './js/webgl-filters.js',
-    './js/ffmpeg/ffmpeg.js'
+    './js/ffmpeg/ffmpeg.js',
+    './js/ffmpeg/814.ffmpeg.js'
 ];
 
 self.addEventListener('install', e => {
@@ -27,7 +28,6 @@ self.addEventListener('fetch', e => {
         caches.match(e.request).then(response => {
             if (response) return response;
             return fetch(e.request).catch(() => {
-                // Fallback для offline
                 if (e.request.destination === 'document') {
                     return caches.match('./index.html');
                 }
