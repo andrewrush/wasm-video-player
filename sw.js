@@ -1,7 +1,5 @@
 // Service Worker for WASM Video Player
-// Кэширует статические файлы для мгновенной загрузки при повторных визитах
-
-const CACHE_NAME = 'wasm-video-player-v2';
+const CACHE_NAME = 'wasm-video-player-v3';
 const FILES_TO_CACHE = [
     './',
     './index.html',
@@ -20,7 +18,11 @@ self.addEventListener('install', e => {
 });
 
 self.addEventListener('activate', e => {
-    e.waitUntil(self.clients.claim());
+    e.waitUntil(
+        caches.keys().then(names => 
+            Promise.all(names.filter(n => n !== CACHE_NAME).map(n => caches.delete(n)))
+        ).then(() => self.clients.claim())
+    );
 });
 
 self.addEventListener('fetch', e => {
