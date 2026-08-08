@@ -121,7 +121,7 @@ if(err.stack)appendLog("STACK: "+err.stack);
 }
 }
 
-async function loadFileToFfmpeg(){if(!state.ffmpegReady||!state.currentFile)return;const inputName="input"+ext(state.currentFileName);await state.ffmpeg.writeFile(inputName,state.currentFileData);appendLog("Файл загружен в FFmpeg FS: "+inputName);}
+async function loadFileToFfmpeg(){if(!state.ffmpegReady||!state.currentFile)return;const inputName="input"+ext(state.currentFileName);const clone=new Uint8Array(state.currentFileData);await state.ffmpeg.writeFile(inputName,clone);appendLog("Файл загружен в FFmpeg FS: "+inputName);}
 
 async function handleFile(file){
 if(!file)return;
