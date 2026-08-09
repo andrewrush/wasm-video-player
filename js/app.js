@@ -266,26 +266,35 @@ async function streamingPipeline(file, retryTranscode=false){
 
     let ms, msUrl, sb;
     try{
+        diag("[SP] new MediaSource()");
         ms=new MediaSource();
+        diag("[SP] createObjectURL");
         msUrl=URL.createObjectURL(ms);
+        diag("[SP] video.src = msUrl");
         els.video.src=msUrl;
+        diag("[SP] await sourceopen");
         await new Promise((resolve, reject) => {
             ms.onsourceopen = () => resolve();
             setTimeout(() => reject(new Error('sourceopen timeout')), 10000);
         });
+        diag("[SP] sourceopen OK");
 
         let copy=false;
         let codecsStr='video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
 
         if(!retryTranscode){
+            diag("[SP] sniffCodecs");
             const sniffed=await sniffCodecs(file);
             copy=sniffed.copy;
             if(copy&&sniffed.codecs) codecsStr=sniffed.codecs;
+            diag("[SP] sniffCodecs OK, copy="+copy);
         }
         const sbCodecs=copy?codecsStr:'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+        diag("[SP] addSourceBuffer: "+sbCodecs);
 
-        try{sb=ms.addSourceBuffer(sbCodecs);}
+        try{sb=ms.addSourceBuffer(sbCodecs);diag("[SP] addSourceBuffer OK");}
         catch(e){
+            diag("[SP] addSourceBuffer FAILED: "+(e&&e.message?e.message:String(e)));
             if(copy&&!retryTranscode){
                 diag('⚠️ Copy-путь не сработал, пробуем транскод...');
                 try{ms.endOfStream();}catch{}
@@ -295,29 +304,51 @@ async function streamingPipeline(file, retryTranscode=false){
             throw e;
         }
 
-        // Используем MEMFS — файл уже загружен loadFileToFfmpeg()
         const IN='input'+ext(file.name);
         const ARGS=copy?['-c','copy']:['-c:v','libx264','-preset','ultrafast','-crf','23','-c:a','aac','-b:a','128k'];
         const D=copy?60:10;
+        diag("[SP] IN="+IN+", D="+D);
 
         let started=false;
         for(let T=0;!state.cancelled;T+=D){
+            diag("[SP] === Чанк T="+T+" ===");
             let segU8;
             try{
+                diag("[SP] exec...");
                 await state.ffmpeg.exec(['-ss',String(T),'-i',IN,'-t',String(D),...ARGS,'-f','mp4','-movflags','frag_keyframe+empty_moov','/seg.mp4']);
-                segU8=new Uint8Array(await state.ffmpeg.readFile('/seg.mp4'));
-                await state.ffmpeg.deleteFile('/seg.mp4');
+                diag("[SP] exec OK");
             }catch(e){
                 const errMsg=(e&&e.message)?e.message:(typeof e==='string'?e:String(e));
-                diag('ℹ️ Конец файла или ошибка чанка: '+errMsg);
+                diag("[SP] exec FAILED: "+errMsg);
                 break;
             }
-            if(!segU8||segU8.length<200) break;
+
+            try{
+                diag("[SP] readFile /seg.mp4...");
+                segU8=new Uint8Array(await state.ffmpeg.readFile('/seg.mp4'));
+                diag("[SP] readFile OK, "+formatBytes(segU8.length));
+            }catch(e){
+                const errMsg=(e&&e.message)?e.message:(typeof e==='string'?e:String(e));
+                diag("[SP] readFile FAILED: "+errMsg);
+                break;
+            }
+
+            try{
+                diag("[SP] deleteFile /seg.mp4...");
+                await state.ffmpeg.deleteFile('/seg.mp4');
+                diag("[SP] deleteFile OK");
+            }catch(e){
+                const errMsg=(e&&e.message)?e.message:(typeof e==='string'?e:String(e));
+                diag("[SP] deleteFile FAILED: "+errMsg);
+            }
+
+            if(!segU8||segU8.length<200){diag("[SP] Чанк слишком мал, конец");break;}
 
             const {init,seg}=splitInitAndSeg(segU8);
-            if(!started){await appendQ(sb,init);started=true;}
-            if(!copy){sb.timestampOffset=T;}
-            if(seg.length){await appendQ(sb,seg);}
+            diag("[SP] split: init="+init.length+", seg="+seg.length);
+            if(!started){await appendQ(sb,init);started=true;diag("[SP] init appended");}
+            if(!copy){sb.timestampOffset=T;diag("[SP] timestampOffset="+T);}
+            if(seg.length){await appendQ(sb,seg);diag("[SP] seg appended");}
             if(els.video.paused){els.video.play().catch(()=>{});}
             updateProgress(0,`Обработано ~${T+D} с`);
             setStatus('transcoding',`🔄 Обработано ~${T+D} с`);
