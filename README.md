@@ -15,6 +15,7 @@
 - 📱 **PWA** — работает офлайн через Service Worker
 - ⚡ **Eager Load** — FFmpeg загружается сразу при открытии страницы
 - 📦 **Streaming** — для файлов > 64MB используется MSE-стриминг по чанкам
+- 📝 **Полное логирование** — каждый шаг streaming pipeline виден в консоли и UI
 
 ## Как это работает
 
@@ -24,12 +25,13 @@
 4. **Большие файлы (> 64 МБ)** — чанкованный стриминг (MSE) с ограниченной памятью
 5. **Маленькие файлы** — полный legacy-транскод
 
-## Streaming Pipeline (v15-fixed)
+## Streaming Pipeline (v15-log)
 
 - **Вход:** файл монтируется в FFmpeg FS
 - **Обработка:** файл нарезается на чанки по 10 секунд, каждый чанк обрабатывается отдельным `exec`
 - **Выход:** фрагментированный MP4 (frag_keyframe+empty_moov+default_base_moof) подаётся в MediaSource Extensions (MSE)
-- **Fix v15:** отключение `video.onerror` на время streaming, корректная обработка `timestampOffset`, защита от `SourceBuffer error`
+- **Логирование:** каждый шаг (`sourceopen`, `addSourceBuffer`, `exec`, `readFile`, `split`, `appendBuffer`, `timestampOffset`) логируется в консоль и UI-панель
+- **Split:** init-сегмент (ftyp+moov) отделяется от media (moof+mdat) перед подачей в MSE
 
 ### Ограничения
 

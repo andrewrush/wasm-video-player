@@ -10,7 +10,6 @@ const state = {
   transcodedBlobUrl: null,
   webglFilter: null,
   useWebgl: false,
-  mseStreamer: null,
 };
 
 const els = {
@@ -103,165 +102,6 @@ async function checkFile(url, name) {
   }
 }
 
-/* ===== MSE Streamer (v15-fixed) ===== */
-class MseStreamer {
-  constructor(video) {
-    this.video = video;
-    this.ms = null;
-    this.sb = null;
-    this.queue = [];
-    this.isOpen = false;
-    this.sourceUrl = null;
-    this._onVideoError = null;
-    this._sbErrorHandler = null;
-    this._sbUpdateEndHandler = null;
-    this._sbAbortHandler = null;
-    this._msSourceOpenHandler = null;
-    this._msErrorHandler = null;
-    this._msSourceEndedHandler = null;
-  }
-
-  async init(mimeCodec) {
-    if (!window.MediaSource) {
-      throw new Error("MediaSource not supported");
-    }
-    if (!MediaSource.isTypeSupported(mimeCodec)) {
-      throw new Error("MIME type not supported: " + mimeCodec);
-    }
-
-    return new Promise((resolve, reject) => {
-      this.ms = new MediaSource();
-      this._msErrorHandler = (e) => {
-        console.error("[MSE] MediaSource error:", e);
-        reject(new Error("MediaSource error"));
-      };
-      this._msSourceEndedHandler = () => {
-        console.log("[MSE] sourceended");
-      };
-      this.ms.addEventListener("error", this._msErrorHandler);
-      this.ms.addEventListener("sourceended", this._msSourceEndedHandler);
-
-      this._msSourceOpenHandler = () => {
-        console.log("[MSE] sourceopen");
-        this.isOpen = true;
-        try {
-          this.sb = this.ms.addSourceBuffer(mimeCodec);
-          this.sb.mode = "segments";
-
-          this._sbErrorHandler = (e) => {
-            console.error("[MSE] SourceBuffer error:", e);
-            diag("❌ SourceBuffer error — возможно, битый init-сегмент или несовместимый кодек");
-            this._drainQueue();
-          };
-          this._sbAbortHandler = () => {
-            console.warn("[MSE] SourceBuffer abort");
-          };
-          this._sbUpdateEndHandler = () => {
-            this._processQueue();
-          };
-
-          this.sb.addEventListener("error", this._sbErrorHandler);
-          this.sb.addEventListener("abort", this._sbAbortHandler);
-          this.sb.addEventListener("updateend", this._sbUpdateEndHandler);
-
-          // Отключаем video.onerror на время streaming
-          this._onVideoError = this.video.onerror;
-          this.video.onerror = null;
-
-          resolve();
-        } catch (err) {
-          reject(err);
-        }
-      };
-      this.ms.addEventListener("sourceopen", this._msSourceOpenHandler);
-
-      this.sourceUrl = URL.createObjectURL(this.ms);
-      this.video.src = this.sourceUrl;
-    });
-  }
-
-  appendBuffer(data) {
-    if (!this.sb) return;
-    this.queue.push(data);
-    this._processQueue();
-  }
-
-  _processQueue() {
-    if (!this.sb || this.sb.updating || this.queue.length === 0) return;
-    try {
-      const data = this.queue.shift();
-      this.sb.appendBuffer(data);
-    } catch (e) {
-      console.error("[MSE] appendBuffer error:", e);
-      diag("❌ appendBuffer failed: " + e.message);
-      if (e.name === "QuotaExceededError") {
-        try {
-          this.sb.remove(0, this.video.currentTime - 5);
-        } catch (_) {}
-      }
-    }
-  }
-
-  _drainQueue() {
-    this.queue = [];
-  }
-
-  setTimestampOffset(offset) {
-    if (!this.sb || this.sb.updating) return false;
-    try {
-      this.sb.timestampOffset = offset;
-      return true;
-    } catch (e) {
-      console.warn("[MSE] timestampOffset error:", e);
-      return false;
-    }
-  }
-
-  endOfStream() {
-    if (this.ms && this.ms.readyState === "open") {
-      try {
-        this.ms.endOfStream();
-      } catch (e) {
-        console.warn("[MSE] endOfStream error:", e);
-      }
-    }
-  }
-
-  destroy() {
-    this._drainQueue();
-    if (this.sb) {
-      try {
-        this.sb.removeEventListener("error", this._sbErrorHandler);
-        this.sb.removeEventListener("abort", this._sbAbortHandler);
-        this.sb.removeEventListener("updateend", this._sbUpdateEndHandler);
-        if (this.ms && this.ms.readyState === "open") {
-          this.ms.removeSourceBuffer(this.sb);
-        }
-      } catch (_) {}
-      this.sb = null;
-    }
-    if (this.ms) {
-      try {
-        this.ms.removeEventListener("error", this._msErrorHandler);
-        this.ms.removeEventListener("sourceopen", this._msSourceOpenHandler);
-        this.ms.removeEventListener("sourceended", this._msSourceEndedHandler);
-        if (this.ms.readyState === "open") {
-          this.ms.endOfStream();
-        }
-      } catch (_) {}
-      this.ms = null;
-    }
-    if (this.sourceUrl) {
-      URL.revokeObjectURL(this.sourceUrl);
-      this.sourceUrl = null;
-    }
-    if (this._onVideoError) {
-      this.video.onerror = this._onVideoError;
-      this._onVideoError = null;
-    }
-  }
-}
-
 /* ===== UI Events ===== */
 function setupEvents() {
   els.dropZone.addEventListener("click", () => els.fileInput.click());
@@ -308,14 +148,13 @@ function setupEvents() {
     btnDecoder.addEventListener("click", () => {
       els.decoderOverlay.style.display = "none";
       if (state.currentFile && state.ffmpegReady) {
-        autoTranscode(state.currentFile, true);
+        tryFfmpegFallback(state.currentFile);
       }
     });
   }
 
   els.video.addEventListener("error", (e) => {
     console.error("[Video] error:", els.video.error);
-    if (state.mseStreamer) return;
     const err = els.video.error;
     let msg = "Ошибка воспроизведения";
     if (err) {
@@ -494,7 +333,7 @@ async function handleFile(file) {
     setupWebgl();
   } else if (state.ffmpegReady) {
     setStatus("transcoding", "🔄 Автотранскодирование в MP4...");
-    await autoTranscode(file);
+    await tryFfmpegFallback(file);
   } else {
     setStatus("error", "❌ Формат не поддерживается HTML5, а FFmpeg WASM недоступен");
     els.video.style.display = "none";
@@ -523,46 +362,127 @@ function setupWebgl() {
   }
 }
 
-/* ===== Transcoding ===== */
-async function autoTranscode(file, force = false) {
-  const STREAMING_THRESHOLD = 64 * 1024 * 1024;
-  if (!force && file.size > STREAMING_THRESHOLD) {
-    diag("📦 Файл > 64MB, пробуем streaming pipeline...");
-    const ok = await tryStreaming(file);
-    if (ok) return;
-    diag("⚠️ Streaming не удался, переключаемся на legacy transcode...");
+/* ===== FFmpeg Fallback with full logging ===== */
+async function tryFfmpegFallback(file) {
+  console.log("=== tryFfmpegFallback START ===");
+  appendLog("=== tryFfmpegFallback START ===");
+
+  if (!state.ffmpegReady) {
+    diag("❌ FFmpeg не готов");
+    console.log("❌ FFmpeg не готов");
+    return;
   }
+  diag("✅ FFmpeg готов");
+  console.log("✅ FFmpeg готов");
+
+  const inputName = "input" + ext(file.name);
+  diag("Загрузка файла в FFmpeg...");
+  console.log("Загрузка файла в FFmpeg...");
+  await state.ffmpeg.writeFile(inputName, state.currentFileData);
+  diag("✅ Файл в FFmpeg");
+  console.log("✅ Файл в FFmpeg");
+
+  const STREAMING_THRESHOLD = 64 * 1024 * 1024;
+  if (file.size > STREAMING_THRESHOLD) {
+    diag("Режим=streaming, размер=" + formatBytes(file.size) + ", порог=64MB → стриминг");
+    console.log("Режим=streaming, размер=" + formatBytes(file.size) + ", порог=64MB → стриминг");
+    const ok = await streamingPipeline(inputName);
+    if (ok) return;
+    diag("⚠️ Стриминг не удался, fallback на legacy...");
+    console.log("⚠️ Стриминг не удался, fallback на legacy...");
+  } else {
+    diag("Режим=legacy, размер=" + formatBytes(file.size) + " < 64MB → полный транскод");
+    console.log("Режим=legacy, размер=" + formatBytes(file.size) + " < 64MB → полный транскод");
+  }
+
   await legacyFullTranscode(file);
+  console.log("=== tryFfmpegFallback END ===");
+  appendLog("=== tryFfmpegFallback END ===");
 }
 
-async function tryStreaming(file) {
-  const input = "input" + ext(file.name);
+/* ===== Streaming Pipeline with FULL logging ===== */
+async function streamingPipeline(inputName) {
+  console.log("=== streamingPipeline START ===");
+  appendLog("=== streamingPipeline START ===");
+
   const SEG_DURATION = 10;
+  const mimeCodec = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+  let ms = null;
+  let sb = null;
+  let sourceUrl = null;
 
   try {
+    // Step 1: MediaSource
+    console.log("[SP] new MediaSource()");
+    appendLog("[SP] new MediaSource()");
+    ms = new MediaSource();
+
+    console.log("[SP] createObjectURL");
+    appendLog("[SP] createObjectURL");
+    sourceUrl = URL.createObjectURL(ms);
+
+    console.log("[SP] video.src = msUrl");
+    appendLog("[SP] video.src = msUrl");
+    els.video.src = sourceUrl;
+
+    // Step 2: wait sourceopen
+    console.log("[SP] await sourceopen");
+    appendLog("[SP] await sourceopen");
+    await new Promise((resolve, reject) => {
+      const onOpen = () => {
+        console.log("[SP] sourceopen OK");
+        appendLog("[SP] sourceopen OK");
+        ms.removeEventListener("sourceopen", onOpen);
+        resolve();
+      };
+      const onErr = (e) => {
+        console.error("[SP] MediaSource error:", e);
+        appendLog("[SP] ❌ MediaSource error");
+        ms.removeEventListener("error", onErr);
+        reject(new Error("MediaSource error"));
+      };
+      ms.addEventListener("sourceopen", onOpen);
+      ms.addEventListener("error", onErr);
+    });
+
+    // Step 3: sniff codecs
+    console.log("[SP] sniffCodecs");
+    appendLog("[SP] sniffCodecs");
+    if (!MediaSource.isTypeSupported(mimeCodec)) {
+      throw new Error("MIME type not supported: " + mimeCodec);
+    }
+    console.log("[SP] sniffCodecs OK, copy=false");
+    appendLog("[SP] sniffCodecs OK, copy=false");
+
+    // Step 4: addSourceBuffer
+    console.log("[SP] addSourceBuffer: " + mimeCodec);
+    appendLog("[SP] addSourceBuffer: " + mimeCodec);
+    sb = ms.addSourceBuffer(mimeCodec);
+    sb.mode = "segments";
+    console.log("[SP] addSourceBuffer OK");
+    appendLog("[SP] addSourceBuffer OK");
+
+    // Step 5: get duration
+    console.log("[SP] IN=" + inputName + ", D=" + SEG_DURATION);
+    appendLog("[SP] IN=" + inputName + ", D=" + SEG_DURATION);
+
     let duration = 60;
     try {
-      await state.ffmpeg.exec(["-i", input]);
+      await state.ffmpeg.exec(["-i", inputName]);
     } catch (_) {}
     const logText = els.logOutput.textContent;
     const durMatch = logText.match(/Duration: (\d+):(\d+):(\d+\.\d+)/);
     if (durMatch) {
       duration = parseInt(durMatch[1]) * 3600 + parseInt(durMatch[2]) * 60 + parseFloat(durMatch[3]);
     }
-    diag("⏱ Длительность: " + duration.toFixed(1) + "с");
+    console.log("[SP] duration=" + duration.toFixed(1) + "s");
+    appendLog("[SP] duration=" + duration.toFixed(1) + "s");
 
-    if (state.mseStreamer) {
-      state.mseStreamer.destroy();
-      state.mseStreamer = null;
-    }
-
-    const mimeCodec = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
-    state.mseStreamer = new MseStreamer(els.video);
-    await state.mseStreamer.init(mimeCodec);
-    diag("✅ MediaSource открыт");
-
+    // Step 6: generate init segment
+    console.log("[SP] generating init segment...");
+    appendLog("[SP] generating init segment...");
     await state.ffmpeg.exec([
-      "-i", input,
+      "-i", inputName,
       "-c:v", "libx264",
       "-preset", "ultrafast",
       "-crf", "23",
@@ -571,40 +491,87 @@ async function tryStreaming(file) {
       "-movflags", "frag_keyframe+empty_moov+default_base_moof",
       "-t", "0",
       "-f", "mp4",
-      "init.mp4",
+      "/init.mp4",
     ]);
 
-    const initData = await state.ffmpeg.readFile("init.mp4");
-    const initBuf = initData.buffer ? initData.buffer.slice(initData.byteOffset, initData.byteOffset + initData.byteLength) : initData;
+    const initData = await state.ffmpeg.readFile("/init.mp4");
+    const initBuf = initData.buffer
+      ? initData.buffer.slice(initData.byteOffset, initData.byteOffset + initData.byteLength)
+      : initData;
+    console.log("[SP] init segment size=" + initBuf.byteLength);
+    appendLog("[SP] init segment size=" + initBuf.byteLength);
 
     if (initBuf.byteLength < 100) {
       throw new Error("Init segment слишком маленький (" + initBuf.byteLength + " bytes)");
     }
-    diag("📦 Init segment: " + initBuf.byteLength + " bytes");
 
-    state.mseStreamer.appendBuffer(initBuf);
-
-    await new Promise((resolve) => {
-      const check = () => {
-        if (state.mseStreamer.queue.length === 0 && !state.mseStreamer.sb.updating) {
-          resolve();
-        } else {
-          setTimeout(check, 50);
+    // Step 7: append init
+    console.log("[SP] appending init...");
+    appendLog("[SP] appending init...");
+    await new Promise((resolve, reject) => {
+      if (sb.updating) {
+        const onUpdate = () => {
+          sb.removeEventListener("updateend", onUpdate);
+          try {
+            sb.appendBuffer(initBuf);
+          } catch (e) {
+            reject(e);
+            return;
+          }
+          const onDone = () => {
+            sb.removeEventListener("updateend", onDone);
+            sb.removeEventListener("error", onErr);
+            resolve();
+          };
+          const onErr = (e) => {
+            sb.removeEventListener("updateend", onDone);
+            sb.removeEventListener("error", onErr);
+            reject(new Error("SourceBuffer error on init append"));
+          };
+          sb.addEventListener("updateend", onDone);
+          sb.addEventListener("error", onErr);
+        };
+        sb.addEventListener("updateend", onUpdate);
+      } else {
+        try {
+          sb.appendBuffer(initBuf);
+        } catch (e) {
+          reject(e);
+          return;
         }
-      };
-      setTimeout(check, 100);
+        const onDone = () => {
+          sb.removeEventListener("updateend", onDone);
+          sb.removeEventListener("error", onErr);
+          resolve();
+        };
+        const onErr = (e) => {
+          sb.removeEventListener("updateend", onDone);
+          sb.removeEventListener("error", onErr);
+          reject(new Error("SourceBuffer error on init append"));
+        };
+        sb.addEventListener("updateend", onDone);
+        sb.addEventListener("error", onErr);
+      }
     });
+    console.log("[SP] init appended OK");
+    appendLog("[SP] init appended OK");
 
+    // Step 8: stream chunks
     const numSegs = Math.ceil(duration / SEG_DURATION);
     for (let i = 0; i < numSegs; i++) {
       const start = i * SEG_DURATION;
-      const segName = "seg_" + i + ".m4s";
+      const segName = "/seg_" + i + ".mp4";
+
+      console.log("[SP] === Чанк T=" + start + " ===");
+      appendLog("[SP] === Чанк T=" + start + " ===");
 
       updateProgress(Math.round((i / numSegs) * 100));
       setStatus("transcoding", "🔄 Стриминг чанк " + (i + 1) + "/" + numSegs + "...");
 
+      console.log("[SP] exec ffmpeg chunk...");
+      appendLog("[SP] exec ffmpeg chunk...");
       await state.ffmpeg.exec([
-        "-i", input,
+        "-i", inputName,
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-crf", "23",
@@ -616,73 +583,170 @@ async function tryStreaming(file) {
         "-f", "mp4",
         segName,
       ]);
+      console.log("[SP] exec OK");
+      appendLog("[SP] exec OK");
 
+      console.log("[SP] readFile " + segName + "...");
+      appendLog("[SP] readFile " + segName + "...");
       const segData = await state.ffmpeg.readFile(segName);
-      const segBuf = segData.buffer ? segData.buffer.slice(segData.byteOffset, segData.byteOffset + segData.byteLength) : segData;
+      const segBuf = segData.buffer
+        ? segData.buffer.slice(segData.byteOffset, segData.byteOffset + segData.byteLength)
+        : segData;
+      console.log("[SP] readFile OK, " + formatBytes(segBuf.byteLength));
+      appendLog("[SP] readFile OK, " + formatBytes(segBuf.byteLength));
 
-      if (segBuf.byteLength > 0) {
-        const initEnd = findMoofOffset(new Uint8Array(segBuf));
-        if (initEnd > 0 && i === 0) {
-          const mediaBuf = segBuf.slice(initEnd);
-          if (mediaBuf.byteLength > 0) {
-            state.mseStreamer.setTimestampOffset(start);
-            state.mseStreamer.appendBuffer(mediaBuf);
-          }
-        } else {
-          state.mseStreamer.setTimestampOffset(start);
-          state.mseStreamer.appendBuffer(segBuf);
-        }
+      console.log("[SP] deleteFile " + segName + "...");
+      appendLog("[SP] deleteFile " + segName + "...");
+      try { await state.ffmpeg.deleteFile(segName); } catch (_) {}
+      console.log("[SP] deleteFile OK");
+      appendLog("[SP] deleteFile OK");
+
+      // Split init and media
+      console.log("[SP] split init/media...");
+      appendLog("[SP] split init/media...");
+      const { init: segInit, media } = splitInitSegment(new Uint8Array(segBuf));
+      console.log("[SP] split: init=" + segInit.byteLength + ", media=" + media.byteLength);
+      appendLog("[SP] split: init=" + segInit.byteLength + ", media=" + media.byteLength);
+
+      const bufToAppend = media.byteLength > 0 ? media : segBuf;
+
+      // Set timestampOffset BEFORE append
+      console.log("[SP] timestampOffset=" + start);
+      appendLog("[SP] timestampOffset=" + start);
+      if (!sb.updating) {
+        sb.timestampOffset = start;
+      } else {
+        await new Promise((resolve) => {
+          const onUpdate = () => {
+            sb.removeEventListener("updateend", onUpdate);
+            sb.timestampOffset = start;
+            resolve();
+          };
+          sb.addEventListener("updateend", onUpdate);
+        });
       }
 
-      try { await state.ffmpeg.deleteFile(segName); } catch (_) {}
+      // Append chunk
+      console.log("[SP] appending chunk buffer...");
+      appendLog("[SP] appending chunk buffer...");
+      await new Promise((resolve, reject) => {
+        if (sb.updating) {
+          const onUpdate = () => {
+            sb.removeEventListener("updateend", onUpdate);
+            try {
+              sb.appendBuffer(bufToAppend);
+            } catch (e) {
+              reject(e);
+              return;
+            }
+            const onDone = () => {
+              sb.removeEventListener("updateend", onDone);
+              sb.removeEventListener("error", onErr);
+              resolve();
+            };
+            const onErr = (e) => {
+              sb.removeEventListener("updateend", onDone);
+              sb.removeEventListener("error", onErr);
+              reject(new Error("SourceBuffer error on chunk append"));
+            };
+            sb.addEventListener("updateend", onDone);
+            sb.addEventListener("error", onErr);
+          };
+          sb.addEventListener("updateend", onUpdate);
+        } else {
+          try {
+            sb.appendBuffer(bufToAppend);
+          } catch (e) {
+            reject(e);
+            return;
+          }
+          const onDone = () => {
+            sb.removeEventListener("updateend", onDone);
+            sb.removeEventListener("error", onErr);
+            resolve();
+          };
+          const onErr = (e) => {
+            sb.removeEventListener("updateend", onDone);
+            sb.removeEventListener("error", onErr);
+            reject(new Error("SourceBuffer error on chunk append"));
+          };
+          sb.addEventListener("updateend", onDone);
+          sb.addEventListener("error", onErr);
+        }
+      });
+      console.log("[SP] chunk appended OK");
+      appendLog("[SP] chunk appended OK");
     }
 
-    await new Promise((resolve) => {
-      const check = () => {
-        if (state.mseStreamer.queue.length === 0 && !state.mseStreamer.sb.updating) {
-          resolve();
-        } else {
-          setTimeout(check, 100);
-        }
-      };
-      setTimeout(check, 200);
-    });
+    // End of stream
+    console.log("[SP] endOfStream()");
+    appendLog("[SP] endOfStream()");
+    if (ms.readyState === "open") {
+      try { ms.endOfStream(); } catch (e) {
+        console.warn("[SP] endOfStream error:", e);
+        appendLog("[SP] endOfStream warning: " + e.message);
+      }
+    }
 
-    state.mseStreamer.endOfStream();
     setStatus("ready", "✅ Стриминг завершён");
     setupWebgl();
     resetProgress();
+    console.log("=== streamingPipeline SUCCESS ===");
+    appendLog("=== streamingPipeline SUCCESS ===");
     return true;
+
   } catch (e) {
-    console.error("[Streaming] failed:", e);
-    diag("❌ Streaming pipeline ошибка: " + e.message);
-    if (state.mseStreamer) {
-      state.mseStreamer.destroy();
-      state.mseStreamer = null;
+    console.error("❌ streamingPipeline EXCEPTION:", e);
+    appendLog("❌ streamingPipeline EXCEPTION: " + e.message);
+    if (ms && ms.readyState === "open") {
+      try { ms.endOfStream(); } catch (_) {}
     }
+    if (sourceUrl) URL.revokeObjectURL(sourceUrl);
+    setStatus("error", "❌ Ошибка стриминга: " + e.message);
     return false;
   }
 }
 
-function findMoofOffset(buf) {
+/* ===== Split MP4 init (ftyp+moov) from media (moof+mdat) ===== */
+function splitInitSegment(uint8arr) {
   let offset = 0;
-  while (offset < buf.length - 8) {
-    const size = (buf[offset] << 24) | (buf[offset + 1] << 16) | (buf[offset + 2] << 8) | buf[offset + 3];
-    const type = String.fromCharCode(buf[offset + 4], buf[offset + 5], buf[offset + 6], buf[offset + 7]);
-    if (type === "moof") return offset;
-    if (size === 0 || size > buf.length - offset) break;
+  let initEnd = 0;
+  while (offset < uint8arr.length - 8) {
+    const size = (uint8arr[offset] << 24) | (uint8arr[offset + 1] << 16) | (uint8arr[offset + 2] << 8) | uint8arr[offset + 3];
+    const type = String.fromCharCode(uint8arr[offset + 4], uint8arr[offset + 5], uint8arr[offset + 6], uint8arr[offset + 7]);
+    if (type === "moof") {
+      initEnd = offset;
+      break;
+    }
+    if (size === 0 || size > uint8arr.length - offset) break;
     offset += size;
   }
-  return 0;
+  if (initEnd > 0) {
+    return {
+      init: uint8arr.buffer.slice(uint8arr.byteOffset, uint8arr.byteOffset + initEnd),
+      media: uint8arr.buffer.slice(uint8arr.byteOffset + initEnd, uint8arr.byteOffset + uint8arr.byteLength),
+    };
+  }
+  // Если не нашли moof — отдаём всё как media
+  return { init: new ArrayBuffer(0), media: uint8arr.buffer };
 }
 
+/* ===== Legacy Full Transcode ===== */
 async function legacyFullTranscode(file) {
   const input = "input" + ext(file.name);
   const output = "output_legacy.mp4";
+
+  console.log("=== legacyFullTranscode START ===");
+  appendLog("=== legacyFullTranscode START ===");
+  console.log("input=" + input + ", output=" + output);
+  appendLog("input=" + input + ", output=" + output);
+
   updateProgress(0);
+  setStatus("transcoding", "🔄 Полное транскодирование...");
 
   try {
-    setStatus("transcoding", "🔄 Полное транскодирование...");
+    console.log("Запуск ffmpeg.exec...");
+    appendLog("Запуск ffmpeg.exec...");
     await state.ffmpeg.exec([
       "-i", input,
       "-c:v", "libx264",
@@ -694,12 +758,19 @@ async function legacyFullTranscode(file) {
       "-y",
       output,
     ]);
+    console.log("exec завершён, читаем output...");
+    appendLog("exec завершён, читаем output...");
 
     const data = await state.ffmpeg.readFile(output);
     const blob = new Blob([data.buffer], { type: "video/mp4" });
     state.transcodedBlobUrl = URL.createObjectURL(blob);
     els.video.src = state.transcodedBlobUrl;
     state.isTranscoded = true;
+
+    console.log("readFile OK, размер=" + formatBytes(blob.size));
+    appendLog("readFile OK, размер=" + formatBytes(blob.size));
+    console.log("Blob создан, URL=" + state.transcodedBlobUrl);
+    appendLog("Blob создан, URL=" + state.transcodedBlobUrl);
 
     showStats({
       "Имя файла": file.name,
@@ -710,8 +781,11 @@ async function legacyFullTranscode(file) {
 
     setStatus("ready", "✅ Транскодировано и воспроизводится");
     setupWebgl();
+    console.log("=== legacyFullTranscode SUCCESS ===");
+    appendLog("=== legacyFullTranscode SUCCESS ===");
   } catch (e) {
-    appendLog("Ошибка транскода: " + e.message);
+    console.error("❌ legacyFullTranscode ERROR:", e);
+    appendLog("❌ legacyFullTranscode ERROR: " + e.message);
     setStatus("error", "❌ Ошибка транскодирования");
   } finally {
     resetProgress();
