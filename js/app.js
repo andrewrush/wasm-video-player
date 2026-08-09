@@ -258,52 +258,34 @@ function appendQ(sb, buf){
 
 async function streamingPipeline(file, retryTranscode=false){
     diag("=== streamingPipeline START ===");
-    console.error("[SP] START");
 
     if(typeof MediaSource === 'undefined'){
         diag("❌ MediaSource не поддерживается");
-        console.error("[SP] MediaSource undefined");
         return false;
     }
-    console.error("[SP] MediaSource OK");
 
     let ms, msUrl, sb;
     try{
-        console.error("[SP] [1] new MediaSource()");
         ms=new MediaSource();
-        console.error("[SP] [1] OK", ms);
-
-        console.error("[SP] [2] createObjectURL");
         msUrl=URL.createObjectURL(ms);
-        console.error("[SP] [2] OK", msUrl);
-
-        console.error("[SP] [3] video.src = msUrl");
         els.video.src=msUrl;
-        console.error("[SP] [3] OK");
-
-        console.error("[SP] [4] await sourceopen");
         await new Promise((resolve, reject) => {
-            ms.onsourceopen = () => { console.error("[SP] sourceopen!"); resolve(); };
+            ms.onsourceopen = () => resolve();
             setTimeout(() => reject(new Error('sourceopen timeout')), 10000);
         });
-        console.error("[SP] [4] OK");
 
         let copy=false;
         let codecsStr='video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
 
         if(!retryTranscode){
-            console.error("[SP] [5] sniffCodecs");
             const sniffed=await sniffCodecs(file);
             copy=sniffed.copy;
             if(copy&&sniffed.codecs) codecsStr=sniffed.codecs;
-            console.error("[SP] [5] copy=", copy);
         }
         const sbCodecs=copy?codecsStr:'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
-        console.error("[SP] [6] addSourceBuffer", sbCodecs);
 
-        try{sb=ms.addSourceBuffer(sbCodecs);console.error("[SP] [6] OK");}
+        try{sb=ms.addSourceBuffer(sbCodecs);}
         catch(e){
-            console.error("[SP] [6] FAILED", e);
             if(copy&&!retryTranscode){
                 diag('⚠️ Copy-путь не сработал, пробуем транскод...');
                 try{ms.endOfStream();}catch{}
@@ -313,17 +295,13 @@ async function streamingPipeline(file, retryTranscode=false){
             throw e;
         }
 
-        console.error("[SP] [7] mount WORKERFS");
-        await state.ffmpeg.mount('WORKERFS',{files:[file]},'/work');
-        console.error("[SP] [7] OK");
-        const IN='/work/'+file.name;
+        // Используем MEMFS — файл уже загружен loadFileToFfmpeg()
+        const IN='input'+ext(file.name);
         const ARGS=copy?['-c','copy']:['-c:v','libx264','-preset','ultrafast','-crf','23','-c:a','aac','-b:a','128k'];
         const D=copy?60:10;
-        console.error("[SP] [8] D=", D);
 
         let started=false;
         for(let T=0;!state.cancelled;T+=D){
-            console.error("[SP] chunk T=", T);
             let segU8;
             try{
                 await state.ffmpeg.exec(['-ss',String(T),'-i',IN,'-t',String(D),...ARGS,'-f','mp4','-movflags','frag_keyframe+empty_moov','/seg.mp4']);
@@ -331,27 +309,26 @@ async function streamingPipeline(file, retryTranscode=false){
                 await state.ffmpeg.deleteFile('/seg.mp4');
             }catch(e){
                 const errMsg=(e&&e.message)?e.message:(typeof e==='string'?e:String(e));
-                console.error("[SP] chunk error:", errMsg);
+                diag('ℹ️ Конец файла или ошибка чанка: '+errMsg);
                 break;
             }
-            if(!segU8||segU8.length<200){console.error("[SP] chunk too small");break;}
+            if(!segU8||segU8.length<200) break;
 
             const {init,seg}=splitInitAndSeg(segU8);
-            if(!started){await appendQ(sb,init);started=true;console.error("[SP] init appended");}
+            if(!started){await appendQ(sb,init);started=true;}
             if(!copy){sb.timestampOffset=T;}
-            if(seg.length){await appendQ(sb,seg);console.error("[SP] seg appended");}
+            if(seg.length){await appendQ(sb,seg);}
             if(els.video.paused){els.video.play().catch(()=>{});}
             updateProgress(0,`Обработано ~${T+D} с`);
             setStatus('transcoding',`🔄 Обработано ~${T+D} с`);
         }
         if(started){try{ms.endOfStream();}catch{}}
-        await state.ffmpeg.unmount('/work').catch(()=>{});
-        console.error("[SP] END started=", started);
+        diag("=== streamingPipeline END, started="+started+" ===");
         return started;
     }catch(e){
         const errMsg=(e&&e.message)?e.message:(typeof e==='string'?e:JSON.stringify(e));
         diag("❌ streamingPipeline EXCEPTION: "+errMsg);
-        console.error("[SP] EXCEPTION:", e);
+        console.error("streamingPipeline exception:",e);
         throw e;
     }
 }
