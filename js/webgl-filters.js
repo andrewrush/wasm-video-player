@@ -1,6 +1,5 @@
 /**
  * WebGL Video Filters for WASM Video Player
- * Inspired by movi-player canvas rendering pipeline
  */
 
 class WebGLVideoFilter {
@@ -20,7 +19,6 @@ class WebGLVideoFilter {
   init() {
     const gl = this.gl;
 
-    // Vertex shader
     const vsSource = `
       attribute vec2 a_position;
       attribute vec2 a_texCoord;
@@ -31,14 +29,13 @@ class WebGLVideoFilter {
       }
     `;
 
-    // Fragment shader with filter uniforms
     const fsSource = `
       precision mediump float;
       varying vec2 v_texCoord;
       uniform sampler2D u_texture;
       uniform vec2 u_resolution;
       uniform float u_time;
-      uniform int u_filter; // 0=none,1=grayscale,2=sepia,3=invert,4=vintage,5=edge,6=pixelate,7=blur
+      uniform int u_filter;
       uniform float u_intensity;
 
       vec4 grayscale(vec4 color) {
@@ -132,7 +129,6 @@ class WebGLVideoFilter {
     this.program = this.createProgram(vsSource, fsSource);
     gl.useProgram(this.program);
 
-    // Setup geometry
     const positions = new Float32Array([
       -1, -1,  1, -1,  -1, 1,
       -1,  1,  1, -1,   1, 1
@@ -156,7 +152,6 @@ class WebGLVideoFilter {
     gl.enableVertexAttribArray(texLoc);
     gl.vertexAttribPointer(texLoc, 2, gl.FLOAT, false, 0, 0);
 
-    // Create texture
     this.texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -164,7 +159,6 @@ class WebGLVideoFilter {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
-    // Uniforms
     this.uResolution = gl.getUniformLocation(this.program, 'u_resolution');
     this.uTime = gl.getUniformLocation(this.program, 'u_time');
     this.uFilter = gl.getUniformLocation(this.program, 'u_filter');
@@ -261,5 +255,4 @@ class WebGLVideoFilter {
   }
 }
 
-// Expose globally
 window.WebGLVideoFilter = WebGLVideoFilter;

@@ -1,129 +1,117 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <script>
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(regs => {
-          regs.forEach(r => r.unregister());
-        });
-      }
-    </script>
-
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WASM Video Player</title>
-    <link rel="stylesheet" href="./css/style.css">
-    <script src="./js/ffmpeg/ffmpeg.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WASM Video Player</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiV0FTTSBWaWRlbyBQbGF5ZXIiLCJzaG9ydF9uYW1lIjoiVmlkZW9QbGF5ZXIiLCJzdGFydF91cmwiOiIuIiwiZGlzcGxheSI6InN0YW5kYWxvbmUiLCJiYWNrZ3JvdW5kX2NvbG9yIjoiIzBkMTExNyIsInRoZW1lX2NvbG9yIjoiIzU4YTZmZiJ9">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🎬 WASM Video Player</h1>
-            <p class="subtitle">MKV · HEVC · AVI · MOV · WebM · MP4 + WebGL</p>
-            <div id="status-bar" class="status loading">Инициализация...</div>
-        </header>
+  <div class="container">
+    <header>
+      <h1>🎬 WASM Video Player</h1>
+      <div class="subtitle">MKV · HEVC · AVI · MOV · WebM · MP4 + WebGL</div>
+      <div id="status-bar" class="status loading">Загрузка...</div>
+    </header>
 
-        <div id="diag-panel" class="panel" style="display:none;">
-            <h3>🔍 Диагностика</h3>
-            <div id="diag-content"></div>
-        </div>
-
-        <div id="drop-zone" class="drop-zone">
-            <p>📁 Перетащите видео сюда или <span class="link">выберите файл</span></p>
-            <p class="hint">MP4, MKV, AVI, MOV, WebM, TS, FLV</p>
-            <input type="file" id="file-input" accept="video/*" hidden>
-        </div>
-
-        <div id="player-stage" class="player-wrapper" data-mode="placeholder">
-            <video id="video-player" controls preload="metadata"></video>
-            <canvas id="gl-canvas"></canvas>
-            <div id="placeholder" class="placeholder">
-                <p>Нет загруженного видео</p>
-            </div>
-            <!-- Overlay: ошибка декодера -->
-            <div id="decoder-error" class="decoder-overlay" style="display:none;">
-                <div class="decoder-icon">⚠️</div>
-                <h3>Playback Error</h3>
-                <p id="decoder-msg">Decoder closed unexpectedly</p>
-                <button id="btn-try-ffmpeg" class="decoder-btn">
-                    🔄 Попробовать FFmpeg
-                </button>
-            </div>
-        </div>
-
-        <div id="settings-panel" class="panel">
-            <h3>⚙️ Настройки обработки</h3>
-            <div class="settings-row">
-                <label for="mode-select">Режим:</label>
-                <select id="mode-select">
-                    <option value="auto" selected>Авто (по размеру файла)</option>
-                    <option value="streaming">Всегда стриминг (MSE)</option>
-                    <option value="legacy">Всегда полный транскод</option>
-                </select>
-            </div>
-            <div class="settings-row">
-                <label for="threshold-input">Порог стриминга (МБ):</label>
-                <input type="number" id="threshold-input" value="64" min="1" max="2048">
-            </div>
-        </div>
-
-        <div id="stats-panel" class="panel" style="display:none;">
-            <h3>📊 Nerd Stats</h3>
-            <div class="stats-grid" id="stats-grid"></div>
-        </div>
-
-        <div id="webgl-panel" class="panel webgl-panel" style="display:none;">
-            <h3>🎨 WebGL Фильтры</h3>
-            <div class="webgl-toggle">
-                <label><input type="checkbox" id="webgl-toggle"> Включить WebGL-рендеринг</label>
-            </div>
-            <div class="filter-grid" id="filter-grid">
-                <button class="filter-btn active" data-filter="none">Оригинал</button>
-                <button class="filter-btn" data-filter="grayscale">Ч/Б</button>
-                <button class="filter-btn" data-filter="sepia">Сепия</button>
-                <button class="filter-btn" data-filter="invert">Инверт</button>
-                <button class="filter-btn" data-filter="vintage">Винтаж</button>
-                <button class="filter-btn" data-filter="edge">Контуры</button>
-                <button class="filter-btn" data-filter="pixelate">Пиксели</button>
-                <button class="filter-btn" data-filter="blur">Блюр</button>
-            </div>
-        </div>
-
-        <div id="ffmpeg-panel" class="panel" style="display:none;">
-            <h3>⚙️ FFmpeg WASM</h3>
-            <div class="btn-group">
-                <button id="btn-transcode" disabled>🔄 Транскод в MP4</button>
-                <button id="btn-thumbs" disabled>🖼 Скриншоты</button>
-                <button id="btn-gif" disabled>🎞 GIF</button>
-                <button id="btn-info" disabled>📋 Инфо</button>
-                <button id="btn-stop" disabled>⏹ Стоп</button>
-            </div>
-            <div id="progress" class="progress" style="display:none;">
-                <div class="progress-bar"><div id="progress-fill"></div></div>
-                <span id="progress-text">0%</span>
-            </div>
-            <div id="log-output" class="log"></div>
-        </div>
-
-        <div id="result-panel" class="panel" style="display:none;">
-            <h3>📤 Результат</h3>
-            <div id="result-content"></div>
-        </div>
-
-        <div id="thumbs-panel" class="panel" style="display:none;">
-            <h3>🖼 Скриншоты</h3>
-            <div id="thumbs-grid" class="thumbs-grid"></div>
-        </div>
-
-        <footer>
-            <p>Вдохновлено <a href="https://github.com/mrujjwalg/movi-player" target="_blank">movi-player</a></p>
-            <div class="footer-links">
-                <a href="https://github.com/andrewrush/wasm-video-player" target="_blank">GitHub Repo</a>
-                <a href="https://andrewrush.github.io/wasm-video-player/" target="_blank">🌐 GitHub Pages</a>
-            </div>
-        </footer>
+    <div id="diag-panel" class="panel" style="display:none">
+      <h3>🔍 Диагностика</h3>
+      <div id="diag-content"></div>
     </div>
-    <script src="./js/webgl-filters.js"></script>
-    <script src="./js/app.js?v=26"></script>
+
+    <div id="drop-zone" class="drop-zone">
+      <div>📁 Перетащите видео сюда или <span class="link">выберите файл</span></div>
+      <div class="hint">MP4, MKV, AVI, MOV, WebM, TS, FLV</div>
+      <input type="file" id="file-input" accept="video/*" hidden>
+    </div>
+
+    <div id="player-wrapper" class="player-wrapper" data-mode="placeholder">
+      <video id="video-player" controls playsinline></video>
+      <canvas id="webgl-canvas"></canvas>
+      <div id="placeholder" class="placeholder">
+        <div>🎥 Выберите видеофайл</div>
+        <div class="hint">Поддерживаются все популярные форматы</div>
+      </div>
+      <div id="decoder-overlay" class="decoder-overlay" style="display:none">
+        <div class="decoder-icon">⚠️</div>
+        <h3>Ошибка декодирования</h3>
+        <p>Попробуйте транскодировать через FFmpeg WASM</p>
+        <button id="btn-decoder-ffmpeg" class="decoder-btn">🔄 Транскодировать</button>
+      </div>
+    </div>
+
+    <div id="stats-panel" class="panel" style="display:none">
+      <h3>📊 Информация о файле</h3>
+      <div id="stats-grid" class="stats-grid"></div>
+    </div>
+
+    <div id="webgl-panel" class="panel webgl-panel" style="display:none">
+      <h3>🎨 WebGL Фильтры</h3>
+      <div class="webgl-toggle">
+        <label>
+          <input type="checkbox" id="webgl-toggle">
+          <span>Включить WebGL-рендеринг</span>
+        </label>
+      </div>
+      <div class="filter-grid">
+        <button class="filter-btn active" data-filter="none">Оригинал</button>
+        <button class="filter-btn" data-filter="grayscale">Ч/Б</button>
+        <button class="filter-btn" data-filter="sepia">Сепия</button>
+        <button class="filter-btn" data-filter="invert">Инверт</button>
+        <button class="filter-btn" data-filter="vintage">Винтаж</button>
+        <button class="filter-btn" data-filter="edge">Контуры</button>
+        <button class="filter-btn" data-filter="pixelate">Пиксели</button>
+        <button class="filter-btn" data-filter="blur">Блюр</button>
+      </div>
+    </div>
+
+    <div id="ffmpeg-panel" class="panel" style="display:none">
+      <h3>⚙️ FFmpeg WASM</h3>
+      <div class="btn-group">
+        <button id="btn-transcode" disabled>🔄 MP4</button>
+        <button id="btn-thumbs" disabled>🖼 Скриншоты</button>
+        <button id="btn-gif" disabled>🎞 GIF</button>
+        <button id="btn-info" disabled>📋 Инфо</button>
+        <button id="btn-stop" disabled>⏹ Стоп</button>
+      </div>
+      <div id="progress" class="progress" style="display:none">
+        <div class="progress-bar"><div id="progress-fill"></div></div>
+        <span id="progress-text">0%</span>
+      </div>
+      <div class="log-toolbar">
+        <button id="btn-copy-logs" class="copy-logs-btn">📋 Копировать логи</button>
+        <span id="copy-feedback" class="copy-feedback"></span>
+      </div>
+      <pre id="log-output" class="log"></pre>
+    </div>
+
+    <div id="result-panel" class="panel" style="display:none">
+      <h3>📤 Результат</h3>
+      <div id="result-content"></div>
+    </div>
+
+    <div id="thumbs-panel" class="panel" style="display:none">
+      <h3>🖼 Скриншоты</h3>
+      <div id="thumbs-grid" class="thumbs-grid"></div>
+    </div>
+
+    <footer>
+      <div>Вдохновлено <a href="https://github.com/movi-player" target="_blank">movi-player</a></div>
+      <div class="footer-links">
+        <a href="https://github.com/andrewrush/wasm-video-player" target="_blank">GitHub Repo</a>
+        <a href="https://andrewrush.github.io/wasm-video-player/" target="_blank">🌐 GitHub Pages</a>
+      </div>
+    </footer>
+  </div>
+
+  <script src="js/ffmpeg/ffmpeg.js"></script>
+  <script src="js/webgl-filters.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+  </script>
 </body>
 </html>
