@@ -258,42 +258,54 @@ function appendQ(sb, buf){
 
 async function streamingPipeline(file, retryTranscode=false){
     diag("=== streamingPipeline START ===");
+    console.error("[SP] START");
+
+    if(typeof MediaSource === 'undefined'){
+        diag("❌ MediaSource не поддерживается");
+        console.error("[SP] MediaSource undefined");
+        return false;
+    }
+    console.error("[SP] MediaSource OK");
+
     let ms, msUrl, sb;
     try{
-        diag("[1] new MediaSource()...");
+        console.error("[SP] [1] new MediaSource()");
         ms=new MediaSource();
-        diag("[1] OK");
+        console.error("[SP] [1] OK", ms);
 
-        diag("[2] URL.createObjectURL...");
+        console.error("[SP] [2] createObjectURL");
         msUrl=URL.createObjectURL(ms);
-        diag("[2] OK, msUrl="+msUrl);
+        console.error("[SP] [2] OK", msUrl);
 
-        diag("[3] video.src = msUrl...");
+        console.error("[SP] [3] video.src = msUrl");
         els.video.src=msUrl;
-        diag("[3] OK");
+        console.error("[SP] [3] OK");
 
-        diag("[4] Ожидание sourceopen...");
-        await new Promise(r=>{ms.onsourceopen=()=>{diag("[4] sourceopen!");r();};});
-        diag("[4] OK");
+        console.error("[SP] [4] await sourceopen");
+        await new Promise((resolve, reject) => {
+            ms.onsourceopen = () => { console.error("[SP] sourceopen!"); resolve(); };
+            setTimeout(() => reject(new Error('sourceopen timeout')), 10000);
+        });
+        console.error("[SP] [4] OK");
 
         let copy=false;
         let codecsStr='video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
 
         if(!retryTranscode){
-            diag("[5] Сниффинг кодеков...");
+            console.error("[SP] [5] sniffCodecs");
             const sniffed=await sniffCodecs(file);
             copy=sniffed.copy;
             if(copy&&sniffed.codecs) codecsStr=sniffed.codecs;
-            diag("[5] copy="+copy+", codecs="+codecsStr);
+            console.error("[SP] [5] copy=", copy);
         }
         const sbCodecs=copy?codecsStr:'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
-        diag("[6] addSourceBuffer с codecs="+sbCodecs);
+        console.error("[SP] [6] addSourceBuffer", sbCodecs);
 
-        try{sb=ms.addSourceBuffer(sbCodecs);diag("[6] OK");}
+        try{sb=ms.addSourceBuffer(sbCodecs);console.error("[SP] [6] OK");}
         catch(e){
-            diag("[6] FAILED: "+(e&&e.message?e.message:String(e)));
+            console.error("[SP] [6] FAILED", e);
             if(copy&&!retryTranscode){
-                diag('[6] Copy-путь не сработал, пробуем транскод...');
+                diag('⚠️ Copy-путь не сработал, пробуем транскод...');
                 try{ms.endOfStream();}catch{}
                 URL.revokeObjectURL(msUrl);
                 return streamingPipeline(file,true);
@@ -301,53 +313,45 @@ async function streamingPipeline(file, retryTranscode=false){
             throw e;
         }
 
-        diag("[7] Монтирование WORKERFS...");
+        console.error("[SP] [7] mount WORKERFS");
         await state.ffmpeg.mount('WORKERFS',{files:[file]},'/work');
-        diag("[7] OK");
+        console.error("[SP] [7] OK");
         const IN='/work/'+file.name;
         const ARGS=copy?['-c','copy']:['-c:v','libx264','-preset','ultrafast','-crf','23','-c:a','aac','-b:a','128k'];
         const D=copy?60:10;
-        diag("[8] Параметры: D="+D+"с");
+        console.error("[SP] [8] D=", D);
 
         let started=false;
         for(let T=0;!state.cancelled;T+=D){
-            diag("=== Чанк T="+T+" ===");
+            console.error("[SP] chunk T=", T);
             let segU8;
             try{
-                diag("[9] exec...");
                 await state.ffmpeg.exec(['-ss',String(T),'-i',IN,'-t',String(D),...ARGS,'-f','mp4','-movflags','frag_keyframe+empty_moov','/seg.mp4']);
-                diag("[9] exec OK");
-                diag("[10] readFile...");
                 segU8=new Uint8Array(await state.ffmpeg.readFile('/seg.mp4'));
-                diag("[10] readFile OK, "+formatBytes(segU8.length));
-                diag("[11] deleteFile...");
                 await state.ffmpeg.deleteFile('/seg.mp4');
-                diag("[11] deleteFile OK");
             }catch(e){
                 const errMsg=(e&&e.message)?e.message:(typeof e==='string'?e:String(e));
-                diag('[12] Чанк ошибка: '+errMsg);
+                console.error("[SP] chunk error:", errMsg);
                 break;
             }
-            if(!segU8||segU8.length<200){diag("[13] Чанк слишком мал, конец");break;}
+            if(!segU8||segU8.length<200){console.error("[SP] chunk too small");break;}
 
             const {init,seg}=splitInitAndSeg(segU8);
-            diag("[14] split: init="+init.length+", seg="+seg.length);
-            if(!started){await appendQ(sb,init);started=true;diag("[15] init appended");}
-            if(!copy){sb.timestampOffset=T;diag("[16] timestampOffset="+T);}
-            if(seg.length){await appendQ(sb,seg);diag("[17] seg appended");}
+            if(!started){await appendQ(sb,init);started=true;console.error("[SP] init appended");}
+            if(!copy){sb.timestampOffset=T;}
+            if(seg.length){await appendQ(sb,seg);console.error("[SP] seg appended");}
             if(els.video.paused){els.video.play().catch(()=>{});}
             updateProgress(0,`Обработано ~${T+D} с`);
             setStatus('transcoding',`🔄 Обработано ~${T+D} с`);
         }
         if(started){try{ms.endOfStream();}catch{}}
-        diag("[18] Размонтирование...");
         await state.ffmpeg.unmount('/work').catch(()=>{});
-        diag("=== streamingPipeline END, started="+started+" ===");
+        console.error("[SP] END started=", started);
         return started;
     }catch(e){
         const errMsg=(e&&e.message)?e.message:(typeof e==='string'?e:JSON.stringify(e));
         diag("❌ streamingPipeline EXCEPTION: "+errMsg);
-        console.error("streamingPipeline exception:",e);
+        console.error("[SP] EXCEPTION:", e);
         throw e;
     }
 }
