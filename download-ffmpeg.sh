@@ -13,7 +13,7 @@ curl -L -o js/ffmpeg/ffmpeg-core.js https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.
 
 curl -L -o js/ffmpeg/ffmpeg-core.wasm https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm
 
-# Worker-файл обязателен для UMD-сборки (ffmpeg.js создает Web Worker)
+# Worker-файл обязателен для UMD-сборки
 curl -L -o js/ffmpeg/814.ffmpeg.js https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js
 
 echo "✅ Готово. Файлы в js/ffmpeg/"

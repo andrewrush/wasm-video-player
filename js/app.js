@@ -10,6 +10,7 @@ const state = {
   transcodedBlobUrl: null,
   webglFilter: null,
   useWebgl: false,
+  abortController: null,
 };
 
 const els = {
@@ -30,6 +31,9 @@ const els = {
   btnThumbs: $("#btn-thumbs"),
   btnGif: $("#btn-gif"),
   btnInfo: $("#btn-info"),
+  btnStop: $("#btn-stop"),
+  btnCopyLogs: $("#btn-copy-logs"),
+  copyFeedback: $("#copy-feedback"),
   progress: $("#progress"),
   progressFill: $("#progress-fill"),
   progressText: $("#progress-text"),
@@ -78,9 +82,48 @@ function resetProgress() {
 }
 
 function enableButtons(enabled) {
-  [els.btnTranscode, els.btnThumbs, els.btnGif, els.btnInfo].forEach((btn) => {
+  const btns = [els.btnTranscode, els.btnThumbs, els.btnGif, els.btnInfo];
+  btns.forEach((btn) => {
     btn.disabled = !enabled || !state.currentFile;
   });
+  if (els.btnStop) els.btnStop.disabled = !enabled;
+}
+
+/* ===== Copy Logs ===== */
+async function copyLogs() {
+  const text = els.logOutput.textContent;
+  if (!text.trim()) {
+    showCopyFeedback("Нечего копировать");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    showCopyFeedback("✅ Скопировано!");
+  } catch (e) {
+    // Fallback
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand("copy");
+      showCopyFeedback("✅ Скопировано!");
+    } catch (_) {
+      showCopyFeedback("❌ Не удалось скопировать");
+    }
+    document.body.removeChild(ta);
+  }
+}
+
+function showCopyFeedback(msg) {
+  if (!els.copyFeedback) return;
+  els.copyFeedback.textContent = msg;
+  els.copyFeedback.classList.add("show");
+  setTimeout(() => {
+    els.copyFeedback.classList.remove("show");
+  }, 2000);
 }
 
 /* ===== File Checks ===== */
@@ -125,6 +168,8 @@ function setupEvents() {
   els.btnThumbs.addEventListener("click", extractThumbnails);
   els.btnGif.addEventListener("click", makeGif);
   els.btnInfo.addEventListener("click", getFfmpegInfo);
+  if (els.btnStop) els.btnStop.addEventListener("click", stopProcessing);
+  if (els.btnCopyLogs) els.btnCopyLogs.addEventListener("click", copyLogs);
 
   const webglToggle = $("#webgl-toggle");
   if (webglToggle) {
@@ -193,6 +238,16 @@ function updatePlayerMode() {
     els.playerWrapper.setAttribute("data-mode", "video");
     if (state.webglFilter) state.webglFilter.stop();
   }
+}
+
+function stopProcessing() {
+  if (state.abortController) {
+    state.abortController.abort();
+    state.abortController = null;
+  }
+  diag("⏹ Обработка остановлена пользователем");
+  setStatus("ready", "⏹ Остановлено");
+  resetProgress();
 }
 
 /* ===== FFmpeg Init ===== */
@@ -368,7 +423,7 @@ function setupWebgl() {
   }
 }
 
-/* ===== FFmpeg Fallback with full logging ===== */
+/* ===== FFmpeg Fallback — ВСЕГДА стриминг (MSE) ===== */
 async function tryFfmpegFallback(file) {
   console.log("=== tryFfmpegFallback START ===");
   appendLog("=== tryFfmpegFallback START ===");
@@ -386,7 +441,6 @@ async function tryFfmpegFallback(file) {
     diag("Проверка файла в FFmpeg FS: " + inputName);
     console.log("Проверка файла в FFmpeg FS: " + inputName);
 
-    // Проверим, что файл есть
     try {
       const testRead = await state.ffmpeg.readFile(inputName);
       diag("✅ Файл найден в FS, размер=" + formatBytes(testRead.length || testRead.byteLength));
@@ -399,26 +453,21 @@ async function tryFfmpegFallback(file) {
       console.log("✅ Файл записан в FFmpeg FS");
     }
 
-    const STREAMING_THRESHOLD = 64 * 1024 * 1024;
-    if (file.size > STREAMING_THRESHOLD) {
-      diag("Режим=streaming, размер=" + formatBytes(file.size) + ", порог=64MB → стриминг");
-      console.log("Режим=streaming, размер=" + formatBytes(file.size) + ", порог=64MB → стриминг");
-      const ok = await streamingPipeline(inputName);
-      if (ok) {
-        console.log("=== tryFfmpegFallback END (streaming OK) ===");
-        appendLog("=== tryFfmpegFallback END (streaming OK) ===");
-        return;
-      }
-      diag("⚠️ Стриминг не удался, fallback на legacy...");
-      console.log("⚠️ Стриминг не удался, fallback на legacy...");
-    } else {
-      diag("Режим=legacy, размер=" + formatBytes(file.size) + " < 64MB → полный транскод");
-      console.log("Режим=legacy, размер=" + formatBytes(file.size) + " < 64MB → полный транскод");
+    // ВСЕГДА стриминг (MSE) — режим по умолчанию
+    diag("Режим=streaming (всегда MSE), размер=" + formatBytes(file.size));
+    console.log("Режим=streaming (всегда MSE), размер=" + formatBytes(file.size));
+    const ok = await streamingPipeline(inputName);
+    if (ok) {
+      console.log("=== tryFfmpegFallback END (streaming OK) ===");
+      appendLog("=== tryFfmpegFallback END (streaming OK) ===");
+      return;
     }
 
+    diag("⚠️ Стриминг не удался, fallback на legacy...");
+    console.log("⚠️ Стриминг не удался, fallback на legacy...");
     await legacyFullTranscode(file);
-    console.log("=== tryFfmpegFallback END (legacy) ===");
-    appendLog("=== tryFfmpegFallback END (legacy) ===");
+    console.log("=== tryFfmpegFallback END (legacy fallback) ===");
+    appendLog("=== tryFfmpegFallback END (legacy fallback) ===");
 
   } catch (e) {
     console.error("❌ tryFfmpegFallback EXCEPTION:", e);
@@ -441,7 +490,6 @@ async function streamingPipeline(inputName) {
   let sourceUrl = null;
 
   try {
-    // Step 1: Check MediaSource support
     console.log("[SP] checking MediaSource...");
     appendLog("[SP] checking MediaSource...");
     if (!window.MediaSource) {
@@ -456,7 +504,6 @@ async function streamingPipeline(inputName) {
     console.log("[SP] MIME supported: " + mimeCodec);
     appendLog("[SP] MIME supported: " + mimeCodec);
 
-    // Step 2: Create MediaSource
     console.log("[SP] new MediaSource()");
     appendLog("[SP] new MediaSource()");
     ms = new MediaSource();
@@ -469,7 +516,6 @@ async function streamingPipeline(inputName) {
     appendLog("[SP] video.src = msUrl");
     els.video.src = sourceUrl;
 
-    // Step 3: wait sourceopen
     console.log("[SP] await sourceopen");
     appendLog("[SP] await sourceopen");
     await new Promise((resolve, reject) => {
@@ -491,7 +537,6 @@ async function streamingPipeline(inputName) {
       ms.addEventListener("error", onErr);
     });
 
-    // Step 4: addSourceBuffer
     console.log("[SP] addSourceBuffer: " + mimeCodec);
     appendLog("[SP] addSourceBuffer: " + mimeCodec);
     sb = ms.addSourceBuffer(mimeCodec);
@@ -499,7 +544,6 @@ async function streamingPipeline(inputName) {
     console.log("[SP] addSourceBuffer OK, mode=segments");
     appendLog("[SP] addSourceBuffer OK, mode=segments");
 
-    // Step 5: get duration
     console.log("[SP] IN=" + inputName + ", D=" + SEG_DURATION);
     appendLog("[SP] IN=" + inputName + ", D=" + SEG_DURATION);
 
@@ -508,9 +552,7 @@ async function streamingPipeline(inputName) {
       console.log("[SP] probing duration with -i...");
       appendLog("[SP] probing duration with -i...");
       await state.ffmpeg.exec(["-i", inputName]);
-    } catch (_) {
-      // FFmpeg -i always exits non-zero, this is expected
-    }
+    } catch (_) {}
     const logText = els.logOutput.textContent;
     const durMatch = logText.match(/Duration: (\d+):(\d+):(\d+\.\d+)/);
     if (durMatch) {
@@ -519,7 +561,6 @@ async function streamingPipeline(inputName) {
     console.log("[SP] duration=" + duration.toFixed(1) + "s");
     appendLog("[SP] duration=" + duration.toFixed(1) + "s");
 
-    // Step 6: stream chunks
     const numSegs = Math.ceil(duration / SEG_DURATION);
     console.log("[SP] numSegs=" + numSegs);
     appendLog("[SP] numSegs=" + numSegs);
@@ -534,7 +575,6 @@ async function streamingPipeline(inputName) {
       updateProgress(Math.round((i / numSegs) * 100));
       setStatus("transcoding", "🔄 Стриминг чанк " + (i + 1) + "/" + numSegs + "...");
 
-      // Run ffmpeg for this chunk
       console.log("[SP] exec ffmpeg chunk...");
       appendLog("[SP] exec ffmpeg chunk...");
       try {
@@ -556,7 +596,6 @@ async function streamingPipeline(inputName) {
       } catch (execErr) {
         console.error("[SP] exec FAILED:", execErr);
         appendLog("[SP] ❌ exec FAILED: " + execErr.message);
-        // Don't fail the whole pipeline on one chunk error, try to continue
         if (i === 0) {
           throw new Error("First chunk failed: " + execErr.message);
         }
@@ -565,7 +604,6 @@ async function streamingPipeline(inputName) {
         continue;
       }
 
-      // Read chunk
       console.log("[SP] readFile " + segName + "...");
       appendLog("[SP] readFile " + segName + "...");
       let segData;
@@ -582,14 +620,12 @@ async function streamingPipeline(inputName) {
       console.log("[SP] readFile OK, " + formatBytes(segBuf.byteLength));
       appendLog("[SP] readFile OK, " + formatBytes(segBuf.byteLength));
 
-      // Delete chunk from FS
       console.log("[SP] deleteFile " + segName + "...");
       appendLog("[SP] deleteFile " + segName + "...");
       try { await state.ffmpeg.deleteFile(segName); } catch (_) {}
       console.log("[SP] deleteFile OK");
       appendLog("[SP] deleteFile OK");
 
-      // Split init and media
       console.log("[SP] split init/media...");
       appendLog("[SP] split init/media...");
       const { init: segInit, media } = splitInitSegment(new Uint8Array(segBuf));
@@ -603,7 +639,6 @@ async function streamingPipeline(inputName) {
         continue;
       }
 
-      // Wait for sb to be ready
       console.log("[SP] waiting for sb.ready...");
       appendLog("[SP] waiting for sb.ready...");
       if (sb.updating) {
@@ -618,7 +653,6 @@ async function streamingPipeline(inputName) {
       console.log("[SP] sb ready");
       appendLog("[SP] sb ready");
 
-      // Set timestampOffset
       console.log("[SP] timestampOffset=" + start);
       appendLog("[SP] timestampOffset=" + start);
       try {
@@ -628,7 +662,6 @@ async function streamingPipeline(inputName) {
         appendLog("[SP] ⚠️ timestampOffset error: " + toErr.message);
       }
 
-      // Append chunk
       console.log("[SP] appending buffer (" + bufToAppend.byteLength + " bytes)...");
       appendLog("[SP] appending buffer (" + bufToAppend.byteLength + " bytes)...");
       await new Promise((resolve, reject) => {
@@ -660,7 +693,6 @@ async function streamingPipeline(inputName) {
       });
     }
 
-    // End of stream
     console.log("[SP] endOfStream()");
     appendLog("[SP] endOfStream()");
     if (ms.readyState === "open") {
@@ -695,7 +727,6 @@ async function streamingPipeline(inputName) {
   }
 }
 
-/* ===== Split MP4 init (ftyp+moov) from media (moof+mdat) ===== */
 function splitInitSegment(uint8arr) {
   let offset = 0;
   let initEnd = 0;
