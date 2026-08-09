@@ -33,6 +33,7 @@ jobs:
           cp -r js _site/
           cp sw.js _site/
           cp README.md _site/
+          cp .nojekyll _site/
 
       - name: Deploy to GitHub Pages (gh-pages branch)
         uses: peaceiris/actions-gh-pages@v4

@@ -1,20 +1,30 @@
+# Dependencies
+node_modules/
+
 # Build artifacts
 *.o
-*_app
-*.tmp
-*.o
-*.log
+*.so
 *.exe
 build/
+dist/
 
-# Trace outputs
-trace.json
-*.log
+# FFmpeg WASM (downloaded separately)
+js/ffmpeg/*.js
+js/ffmpeg/*.wasm
+!js/ffmpeg/.gitkeep
+
+# IDE
+.vscode/
+.idea/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# IDE
-.vscode/
-.idea/
+# Logs
+*.log
+npm-debug.log*
+
+# Temp
+tmp/
+temp/
